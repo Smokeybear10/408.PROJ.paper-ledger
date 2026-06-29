@@ -1,0 +1,7 @@
+node_modules/
+.next/
+.gstack/
+*.tsbuildinfo
+.env*
+!.env.example
+.DS_Store

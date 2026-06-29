@@ -1,0 +1,334 @@
+import type { Dataset, Invoice, Payment, SourceInfo } from "./contracts";
+
+const invoices: Invoice[] = [
+  {
+    "id": "INV-4107",
+    "customer": "Morgan Studio",
+    "customerKey": "C07",
+    "dueDate": "2026-11-04",
+    "amountMinor": 50000,
+    "currency": "USD",
+    "sourceRow": 2,
+    "raw": {
+      "invoice_id": "INV-4107",
+      "customer": "Morgan Studio",
+      "customer_key": "C07",
+      "due_date": "2026-11-04",
+      "amount": "500.00",
+      "currency": "USD"
+    }
+  },
+  {
+    "id": "INV-4108",
+    "customer": "Morgan Studio",
+    "customerKey": "C07",
+    "dueDate": "2026-11-04",
+    "amountMinor": 50000,
+    "currency": "USD",
+    "sourceRow": 3,
+    "raw": {
+      "invoice_id": "INV-4108",
+      "customer": "Morgan Studio",
+      "customer_key": "C07",
+      "due_date": "2026-11-04",
+      "amount": "500.00",
+      "currency": "USD"
+    }
+  },
+  {
+    "id": "INV-4104",
+    "customer": "Amber & Co.",
+    "customerKey": "C02",
+    "dueDate": "2026-11-01",
+    "amountMinor": 75000,
+    "currency": "USD",
+    "sourceRow": 4,
+    "raw": {
+      "invoice_id": "INV-4104",
+      "customer": "Amber & Co.",
+      "customer_key": "C02",
+      "due_date": "2026-11-01",
+      "amount": "750.00",
+      "currency": "USD"
+    }
+  },
+  {
+    "id": "INV-4105",
+    "customer": "Northline",
+    "customerKey": "C05",
+    "dueDate": "2026-11-02",
+    "amountMinor": 96000,
+    "currency": "USD",
+    "sourceRow": 5,
+    "raw": {
+      "invoice_id": "INV-4105",
+      "customer": "Northline",
+      "customer_key": "C05",
+      "due_date": "2026-11-02",
+      "amount": "960.00",
+      "currency": "USD"
+    }
+  },
+  {
+    "id": "INV-4106",
+    "customer": "Reid Works",
+    "customerKey": "C03",
+    "dueDate": "2026-11-03",
+    "amountMinor": 32500,
+    "currency": "USD",
+    "sourceRow": 6,
+    "raw": {
+      "invoice_id": "INV-4106",
+      "customer": "Reid Works",
+      "customer_key": "C03",
+      "due_date": "2026-11-03",
+      "amount": "325.00",
+      "currency": "USD"
+    }
+  },
+  {
+    "id": "INV-4109",
+    "customer": "Atlas Press",
+    "customerKey": "C11",
+    "dueDate": "2026-11-04",
+    "amountMinor": 24000,
+    "currency": "USD",
+    "sourceRow": 7,
+    "raw": {
+      "invoice_id": "INV-4109",
+      "customer": "Atlas Press",
+      "customer_key": "C11",
+      "due_date": "2026-11-04",
+      "amount": "240.00",
+      "currency": "USD"
+    }
+  }
+];
+
+const payments: Payment[] = [
+  {
+    "id": "PAY701",
+    "customerKey": "C07",
+    "invoiceId": null,
+    "grossMinor": 50000,
+    "feeMinor": 1794,
+    "netMinor": 48206,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Balance for invoice forty-one-oh-seven. Thanks.",
+    "timestamp": "2026-11-04T10:15:00Z",
+    "providerId": "PAY701",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 2,
+    "raw": {
+      "transaction_id": "PAY701",
+      "timestamp": "2026-11-04T10:15:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "",
+      "customer_key": "C07",
+      "gross": "500.00",
+      "fee_cost": "17.94",
+      "net": "482.06",
+      "currency": "USD",
+      "memo": "Balance for invoice forty-one-oh-seven. Thanks.",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY699",
+    "customerKey": "C02",
+    "invoiceId": "INV-4104",
+    "grossMinor": 75000,
+    "feeMinor": 2620,
+    "netMinor": 72380,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Invoice INV-4104",
+    "timestamp": "2026-11-01T14:20:00Z",
+    "providerId": "PAY699",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 3,
+    "raw": {
+      "transaction_id": "PAY699",
+      "timestamp": "2026-11-01T14:20:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "INV-4104",
+      "customer_key": "C02",
+      "gross": "750.00",
+      "fee_cost": "26.20",
+      "net": "723.80",
+      "currency": "USD",
+      "memo": "Invoice INV-4104",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY698",
+    "customerKey": "C05",
+    "invoiceId": "INV-4105",
+    "grossMinor": 60000,
+    "feeMinor": 2142,
+    "netMinor": 57858,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Part payment for INV-4105",
+    "timestamp": "2026-11-02T12:05:00Z",
+    "providerId": "PAY698",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 4,
+    "raw": {
+      "transaction_id": "PAY698",
+      "timestamp": "2026-11-02T12:05:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "INV-4105",
+      "customer_key": "C05",
+      "gross": "600.00",
+      "fee_cost": "21.42",
+      "net": "578.58",
+      "currency": "USD",
+      "memo": "Part payment for INV-4105",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY700",
+    "customerKey": "C03",
+    "invoiceId": "INV-4106",
+    "grossMinor": 32500,
+    "feeMinor": null,
+    "netMinor": null,
+    "status": "pending",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Payment pending",
+    "timestamp": "2026-11-03T16:30:00Z",
+    "providerId": "PAY700",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 5,
+    "raw": {
+      "transaction_id": "PAY700",
+      "timestamp": "2026-11-03T16:30:00Z",
+      "status": "pending",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "INV-4106",
+      "customer_key": "C03",
+      "gross": "325.00",
+      "fee_cost": "",
+      "net": "",
+      "currency": "USD",
+      "memo": "Payment pending",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY702",
+    "customerKey": "C11",
+    "invoiceId": "INV-4109",
+    "grossMinor": 24000,
+    "feeMinor": 885,
+    "netMinor": 23115,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Invoice INV-4109",
+    "timestamp": "2026-11-04T11:00:00Z",
+    "providerId": "PAY702",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 6,
+    "raw": {
+      "transaction_id": "PAY702",
+      "timestamp": "2026-11-04T11:00:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "INV-4109",
+      "customer_key": "C11",
+      "gross": "240.00",
+      "fee_cost": "8.85",
+      "net": "231.15",
+      "currency": "USD",
+      "memo": "Invoice INV-4109",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "RF702",
+    "customerKey": "C11",
+    "invoiceId": "INV-4109",
+    "grossMinor": -6000,
+    "feeMinor": 0,
+    "netMinor": -6000,
+    "status": "completed",
+    "kind": "refund",
+    "eventCode": "T1107",
+    "memo": "Partial refund of PAY702",
+    "timestamp": "2026-11-04T11:30:00Z",
+    "referenceId": "PAY702",
+    "referenceType": "TXN",
+    "providerId": "RF702",
+    "currency": "USD",
+    "sourceRow": 7,
+    "raw": {
+      "transaction_id": "RF702",
+      "timestamp": "2026-11-04T11:30:00Z",
+      "status": "completed",
+      "kind": "refund",
+      "event_code": "T1107",
+      "invoice_id": "INV-4109",
+      "customer_key": "C11",
+      "gross": "-60.00",
+      "fee_cost": "0.00",
+      "net": "-60.00",
+      "currency": "USD",
+      "memo": "Partial refund of PAY702",
+      "reference_id": "PAY702",
+      "reference_type": "TXN"
+    }
+  }
+];
+
+const source: Omit<SourceInfo, "label"> = {
+  "kind": "sample",
+  "coverage": "sample",
+  "rangeStart": "2026-11-01",
+  "rangeEnd": "2026-11-04",
+  "unsupportedCount": 0,
+  "duplicateCount": 0,
+  "providerVerified": false
+};
+
+export function createSampleDataset(): Dataset {
+  return {
+    invoices: structuredClone(invoices),
+    payments: structuredClone(payments),
+    invoiceSource: { ...source, label: "Sample invoices · 6 rows" },
+    paymentSource: { ...source, label: "Sample payments · 6 observations" },
+    revision: 0,
+  };
+}
+

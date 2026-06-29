@@ -1,0 +1,8 @@
+"transaction_id","timestamp","status","kind","event_code","invoice_id","customer_key","gross","fee_cost","net","currency","memo","reference_id","reference_type"
+"PAY701","2026-11-04T10:15:00Z","completed","receipt","T0006","","C07","500.00","17.94","482.06","USD","Balance for invoice forty-one-oh-seven. Thanks.","",""
+"PAY699","2026-11-01T14:20:00Z","completed","receipt","T0006","INV-4104","C02","750.00","26.20","723.80","USD","Invoice INV-4104","",""
+"PAY698","2026-11-02T12:05:00Z","completed","receipt","T0006","INV-4105","C05","600.00","21.42","578.58","USD","Part payment for INV-4105","",""
+"PAY700","2026-11-03T16:30:00Z","pending","receipt","T0006","INV-4106","C03","325.00","","","USD","Payment pending","",""
+"PAY702","2026-11-04T11:00:00Z","completed","receipt","T0006","INV-4109","C11","240.00","8.85","231.15","USD","Invoice INV-4109","",""
+"RF702","2026-11-04T11:30:00Z","completed","refund","T1107","INV-4109","C11","-60.00","0.00","-60.00","USD","Partial refund of PAY702","PAY702","TXN"
+
