@@ -2,13 +2,15 @@
 
 **Source: [Smokeybear10/paper-ledger](https://github.com/Smokeybear10/paper-ledger)**
 
+**Demo video: [Watch the 2:07.27 demo](https://youtu.be/aVgbXZFPMJ4)**
+
 Paper Ledger reconciles invoice balances with PayPal receipt evidence and explicit human review.
 The r4 workflow moves AI evidence preparation into one focused dialog while preserving provider-bound consent, original investigation scope and human authority. Its 36-file clean install/typecheck/build, dialog checks, real Codex sample flow and 13 downloaded-export checks passed. The 12-case HTTP/Codex regression, actual $1.00 capture/review/export workflow and separate reporting check ran on r3; financial calculations and server adapters remain unchanged in the r4.1 publication snapshot. The intentional r4 restart cleared the process-memory PayPal connection, and no new PayPal read is claimed. This document describes the approved r4.1 source; demo and competition-entry status are tracked below.
 Updated November 6, 2026.
 
-**Version scope:** This document describes the r4.1 publication snapshot of the r4 application, following baseline [58c6e9b](https://github.com/Smokeybear10/paper-ledger/tree/58c6e9b). It includes the evidence-map/report views, Activity import, manual association, explicit invoice scope, sandbox onboarding and focused AI dialog, plus the warning-visibility correction recorded below. Verification retains its evaluated r3/r4 snapshot labels.
+**Version scope:** This document describes r4.1 source published in code commit [630b1556](https://github.com/Smokeybear10/paper-ledger/commit/630b1556ba91dba6f6ff1152061bf16cfdce320d), following baseline [58c6e9b](https://github.com/Smokeybear10/paper-ledger/tree/58c6e9b). It includes the evidence-map/report views, Activity import, manual association, explicit invoice scope, sandbox onboarding and focused AI dialog, plus the warning-visibility correction recorded below. Verification retains its evaluated r3/r4 snapshot labels.
 
-Judge entry points: [clean-machine setup](#judge-quick-start), [sample review](#try-the-sample-and-review-workflow), [submission draft](#6-competition-entry-draft), [source-package plan](#public-source-package-plan).
+Judge entry points: [clean-machine setup](#judge-quick-start), [sample review](#try-the-sample-and-review-workflow), [submission draft](#6-competition-entry-draft), [source package](#public-source-package).
 
 ## Judge quick start
 
@@ -490,9 +492,9 @@ The preserved historical Codex run completed at 2026-11-06 00:05 UTC (November 5
 
 The baseline checks a literal invoice ID, otherwise a unique gross-amount/customer-group match; it does not interpret descriptions, negation, corrections or model-control instructions. It is a simple comparator, not a tuned incumbent. Both the historical challenge and later r3 regression use the same curated synthetic cases, not a held-out production evaluation: no real merchants, representative dataset, production accuracy, saved labor, or superiority to established reconciliation systems is established. `codex-cli-default` identifies the adapter setting, not the underlying model. All successful interpretations still require manual review; exact-quote/citation checks do not make operator-provided context true.
 
-### Final local demo and proposed publication metadata
+### Public demo and publication metadata
 
-The final local MP4 is **127.266667 seconds (2:07.27)**, 1080p/30 fps H.264 with silent English captions. It uses 347 unchanged source JPEGs from five selected windows; ordinary hard cuts remove offscreen typing/navigation. The original four captures totaling 144.040 seconds remain preserved. Independent edit-manifest, full blank/decode and targeted eight-keyframe checks passed. The full 18.052-second model wait remains visible; it is one recorded wait, not a production latency benchmark. Public YouTube publication is pending.
+The [public YouTube demo](https://youtu.be/aVgbXZFPMJ4) uses the final **127.266667-second (2:07.27)** MP4, 1080p/30 fps H.264 with silent English captions. It uses 347 unchanged source JPEGs from five selected windows; ordinary hard cuts remove offscreen typing/navigation. The original four captures totaling 144.040 seconds remain preserved. Independent edit-manifest, full blank/decode and targeted eight-keyframe checks passed. The full 18.052-second model wait remains visible; it is one recorded wait, not a production latency benchmark. The 15-cue English caption track is saved, and YouTube copyright checks reported no issues.
 
 The actual footage combines the r3 sandbox capture sequence with the r4 synthetic-sample Codex investigation; financial calculations and server adapters are unchanged. Source versions and synthetic labels remain explicit. The final cut shows the following sequence; it does not show typing the decision note, opening downloaded HTML, partial-case review or map exploration. The r4.1 correction does not change the recorded demo case.
 
@@ -504,7 +506,7 @@ The actual footage combines the r3 sandbox capture sequence with the r4 syntheti
 | 105.949–110.949 | Visible human **Confirm** transition at 108.063 seconds. |
 | 110.949–127.266 | Completed review: $500 confirmed/$1,590 unallocated, saved human reason and three actual download events. |
 
-The following YouTube metadata is prepared; public publication is pending. The source/setup link points to this repository's judge instructions.
+The following metadata accompanies the published YouTube demo. The source/setup link points to this repository's judge instructions.
 
 **Title:** `Paper Ledger | PayPal AI Hackathon Demo`
 
@@ -531,8 +533,8 @@ The [official overview](https://paypalaihackathon.devpost.com/) requires a worki
 | Working local build | The 36-file r4 clean copy passed install/typecheck/build, 20 dialog handler/SSR checks, four focus-effect checks, eight browser layout checks and a fresh real Codex sample flow with 13 downloaded-export checks. The r4.1 publication stage passed six refund-preview cases, fresh 24 dialog/focus checks and typecheck/build. The 12-case API regression ran on r3; financial calculations/server adapters are unchanged |
 | Meaningful authenticated PayPal use | Verified on r3 at the controlled functional-test level: one actual $1.00 sandbox capture was fetched, normalized, reviewed, confirmed and exported to byte-checked downloads. A bounded reporting query succeeded after permission enablement/fresh OAuth; its unknown event stayed unsupported and was not applied. The r4 restart cleared its connection; no new PayPal read is claimed. Complete history, all mappings and production merchant use are not established |
 | Meaningful runtime AI | The r3 HTTP/Codex regression passed 12 immutable cases with zero wrong associations/errors/retries. A fresh r4 canonical-UI real Codex call used named approval, the literal 79-character note and two contexts, followed by human confirmation and original-scope retention. These are synthetic functional checks, not production accuracy |
-| Public source URL | [Smokeybear10/paper-ledger](https://github.com/Smokeybear10/paper-ledger) · MIT · r4 workflow and r4.1 source/setup described in this document |
-| Public demo video URL | Final local 1080p/30 fps H.264 demo is 127.266667 seconds (2:07.27), with silent English captions and passed edit-manifest/blank/decode/eight-keyframe checks. Public YouTube publication is pending; prepared metadata is above |
+| Public source URL | [Smokeybear10/paper-ledger](https://github.com/Smokeybear10/paper-ledger) · MIT · published r4.1 code commit [630b1556](https://github.com/Smokeybear10/paper-ledger/tree/630b1556ba91dba6f6ff1152061bf16cfdce320d), with setup in this document |
+| Public demo video URL | [Watch the public demo](https://youtu.be/aVgbXZFPMJ4) · 127.266667 seconds (2:07.27), 1080p/30 fps H.264, silent English captions and saved 15-cue English track. Edit-manifest/blank/decode/eight-keyframe checks passed; YouTube copyright checks reported no issues |
 | Entry text and tools disclosure | Drafted above; reconcile statements with the final recorded build before entering the form |
 | Judge access through December 15 | Final instructions must make the app and required provider access usable through the end of judging; no developer credentials are bundled in source |
 | Registration | Confirmed: Devpost directly displayed “You're registered for this hackathon” |
@@ -616,5 +618,5 @@ Initial contracts were selected November 4, 2026; local workspace/provider refin
 - New automated test-suite scaffolding: not requested; appropriate verification remains required.
 - Public hosting and production-account integration: the judging path is a local build. Source publication, video and final submission are release deliverables tracked above.
 
-Status: This document describes the approved r4.1 source snapshot. Its warning-visibility correction passed six domain/SSR cases, fresh 24 dialog/focus checks and publication-stage typecheck/build. The r4 clean build, eight browser layout checks and real Codex sample flow with 13 export checks remain recorded above. The 12-case API regression, actual $1.00 sandbox path (eight browser/15 export checks) and HTTP-200 bounded reporting read ran on r3; financial calculations and server adapters are unchanged. The last reviewed r4 session was disconnected after restart; no new PayPal read is claimed. Phone visual QA, every event mapping, recent visibility and complete history remain unverified. Archive evidence belongs to its matching external manifest. The final local demo is 127.266667 seconds (2:07.27), with passed edit-manifest/blank/decode/eight-keyframe checks; public YouTube publication is pending. Devpost registration is confirmed; its project entry is not created and final submission is not complete. Gemini access remains unverified.
+Status: R4.1 source is published in code commit [630b1556](https://github.com/Smokeybear10/paper-ledger/commit/630b1556ba91dba6f6ff1152061bf16cfdce320d). Its warning-visibility correction passed six domain/SSR cases, fresh 24 dialog/focus checks and publication-stage typecheck/build. The r4 clean build, eight browser layout checks and real Codex sample flow with 13 export checks remain recorded above. The 12-case API regression, actual $1.00 sandbox path (eight browser/15 export checks) and HTTP-200 bounded reporting read ran on r3; financial calculations and server adapters are unchanged. The last reviewed r4 session was disconnected after restart; no new PayPal read is claimed. Phone visual QA, every event mapping, recent visibility and complete history remain unverified. Archive evidence belongs to its matching external manifest. The [public demo](https://youtu.be/aVgbXZFPMJ4) is 127.266667 seconds (2:07.27), with passed edit-manifest/blank/decode/eight-keyframe checks and a saved 15-cue English caption track. Devpost registration is confirmed; its project entry is not created and final submission is not complete. Gemini access remains unverified.
 
