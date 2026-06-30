@@ -12,6 +12,7 @@ export const invoiceSchema = z.object({
   id: idSchema,
   customer: z.string().trim().min(1).max(240),
   customerKey: z.string().max(240),
+  description: z.string().max(500).optional(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   amountMinor: moneySchema.refine((value) => value > 0),
   currency: currencySchema,
@@ -86,30 +87,49 @@ export type Reconciliation = {
   stats: { invoiceCount: number; needsReviewCount: number; coveredCount: number; confirmedGrossMinor: number; totalInvoiceMinor: number; knownFeeMinor: number; unknownFeeCount: number };
 };
 
-export const paypalRequestSchema = z.discriminatedUnion("operation", [
-  z.object({ operation: z.literal("capture"), captureId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/) }).strict(),
-  z.object({ operation: z.literal("transactions"), startDate: z.string().min(1).max(64), endDate: z.string().min(1).max(64) }).strict(),
+export const paypalConnectionRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("status") }).strict(),
+  z.object({ operation: z.literal("connect"), clientId: z.string().trim().min(1).max(1024).regex(/^[!-~]+$/).refine((value) => !value.includes(":")), clientSecret: z.string().trim().min(1).max(2048).regex(/^[!-~]+$/) }).strict(),
+  z.object({ operation: z.literal("disconnect") }).strict(),
 ]);
-export const paypalResponseSchema = z.object({ payments: z.array(paymentSchema).max(MAX_ROWS), source: sourceInfoSchema });
+export const paypalConnectionStatusSchema = z.object({
+  connected: z.boolean(),
+  authenticated: z.boolean(),
+  source: z.enum(["environment", "memory"]).nullable(),
+  connectionId: z.uuid().nullable(),
+}).strict().refine((value) => value.connected ? value.connectionId !== null && value.source !== null : value.connectionId === null && value.source === null && !value.authenticated);
+export const paypalRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("capture"), captureId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/), connectionId: z.uuid() }).strict(),
+  z.object({ operation: z.literal("transactions"), startDate: z.string().min(1).max(64), endDate: z.string().min(1).max(64), connectionId: z.uuid() }).strict(),
+]);
+export const paypalApiRequestSchema = z.union([paypalConnectionRequestSchema, paypalRequestSchema]);
+export const paypalResponseSchema = z.object({ payments: z.array(paymentSchema).max(MAX_ROWS), source: sourceInfoSchema, connectionId: z.uuid() });
+export type PayPalConnectionRequest = z.infer<typeof paypalConnectionRequestSchema>;
+export type PayPalConnectionStatus = z.infer<typeof paypalConnectionStatusSchema>;
 export type PayPalRequest = z.infer<typeof paypalRequestSchema>;
 export type PayPalResponse = z.infer<typeof paypalResponseSchema>;
 
-export const evidenceInvoiceSchema = invoiceSchema.pick({ id: true, amountMinor: true, currency: true, dueDate: true }).extend({ customerGroup: z.string().max(40).nullable() }).strict();
+export const evidenceInvoiceSchema = invoiceSchema.pick({ id: true, amountMinor: true, currency: true, dueDate: true }).extend({ customerGroup: z.string().max(40).nullable(), context: z.string().max(500).default("").transform((value) => value.trim() ? value : "") }).strict();
 export const evidencePaymentSchema = paymentSchema.pick({ id: true, grossMinor: true, feeMinor: true, netMinor: true, currency: true, invoiceId: true, status: true, kind: true, eventCode: true }).extend({ customerGroup: z.string().max(40).nullable() }).strict();
-export const investigationRequestSchema = z.object({
+export const investigationContextSchema = z.object({
   caseId: idSchema,
   invoices: z.array(evidenceInvoiceSchema).min(1).max(20),
   payments: z.array(evidencePaymentSchema).min(1).max(20),
   excerpt: z.string().trim().min(1).max(1200),
   excerptPaymentId: idSchema,
+  invoiceScope: z.object({ totalCandidates: z.number().int().min(2).max(MAX_ROWS), excludedCandidates: z.number().int().min(1).max(MAX_ROWS - 1) }).strict().optional(),
+}).strict();
+export const investigationRequestSchema = investigationContextSchema.extend({
   requestId: z.string().min(1).max(100),
   fingerprint: z.string().min(1).max(32768),
-}).strict();
+}).refine((value) => !value.invoiceScope || value.invoiceScope.totalCandidates === value.invoices.length + value.invoiceScope.excludedCandidates, { path: ["invoiceScope"], message: "The selected and excluded invoice counts must equal the total candidate count." });
+export const investigationApiRequestSchema = investigationRequestSchema.safeExtend({ expectedProvider: z.enum(["codex", "gemini"]) });
 export const proposalSchema = z.object({
   invoiceId: idSchema.nullable(),
   paymentIds: z.array(idSchema).max(5),
   evidenceIds: z.array(z.string().min(1).max(240)).min(1).max(20),
   quote: z.string().max(240),
+  contextQuote: z.string().max(240).nullable().default(null),
   interpretedReference: z.string().max(100).nullable(),
   category: z.enum(["reference_interpretation", "no_supported_match", "ambiguous"]),
   observationIds: z.array(z.string().min(1).max(300)).max(20),
@@ -135,6 +155,8 @@ export type DecisionEvidence = {
   capturedAt: string;
   excerpt: string;
   excerptPaymentId: string;
+  invoiceContexts: Record<string, string>;
+  invoiceScopeIds?: string[];
   investigation: InvestigationResponse;
 };
 export type Proposal = z.infer<typeof proposalSchema>;

@@ -15,8 +15,10 @@ const invoices: Invoice[] = [
       "customer_key": "C07",
       "due_date": "2026-11-04",
       "amount": "500.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "November event retainer"
+    },
+    "description": "November event retainer"
   },
   {
     "id": "INV-4108",
@@ -32,8 +34,10 @@ const invoices: Invoice[] = [
       "customer_key": "C07",
       "due_date": "2026-11-04",
       "amount": "500.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "Remaining October event balance"
+    },
+    "description": "Remaining October event balance"
   },
   {
     "id": "INV-4104",
@@ -49,8 +53,10 @@ const invoices: Invoice[] = [
       "customer_key": "C02",
       "due_date": "2026-11-01",
       "amount": "750.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "Brand photography final invoice"
+    },
+    "description": "Brand photography final invoice"
   },
   {
     "id": "INV-4105",
@@ -66,8 +72,10 @@ const invoices: Invoice[] = [
       "customer_key": "C05",
       "due_date": "2026-11-02",
       "amount": "960.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "Warehouse illustration project balance"
+    },
+    "description": "Warehouse illustration project balance"
   },
   {
     "id": "INV-4106",
@@ -83,8 +91,10 @@ const invoices: Invoice[] = [
       "customer_key": "C03",
       "due_date": "2026-11-03",
       "amount": "325.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "November venue hire"
+    },
+    "description": "November venue hire"
   },
   {
     "id": "INV-4109",
@@ -100,8 +110,10 @@ const invoices: Invoice[] = [
       "customer_key": "C11",
       "due_date": "2026-11-04",
       "amount": "240.00",
-      "currency": "USD"
-    }
+      "currency": "USD",
+      "description": "Print production invoice"
+    },
+    "description": "Print production invoice"
   }
 ];
 
@@ -116,7 +128,7 @@ const payments: Payment[] = [
     "status": "completed",
     "kind": "receipt",
     "eventCode": "T0006",
-    "memo": "Balance for invoice forty-one-oh-seven. Thanks.",
+    "memo": "This is the retainer for the November event, not the remaining October balance.",
     "timestamp": "2026-11-04T10:15:00Z",
     "providerId": "PAY701",
     "referenceId": null,
@@ -135,7 +147,7 @@ const payments: Payment[] = [
       "fee_cost": "17.94",
       "net": "482.06",
       "currency": "USD",
-      "memo": "Balance for invoice forty-one-oh-seven. Thanks.",
+      "memo": "This is the retainer for the November event, not the remaining October balance.",
       "reference_id": "",
       "reference_type": ""
     }

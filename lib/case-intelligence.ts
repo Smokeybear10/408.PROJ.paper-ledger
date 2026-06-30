@@ -1,4 +1,4 @@
-import type { Dataset, Payment, ReviewState } from "./contracts";
+import type { Dataset, Payment, Reconciliation, ReviewState } from "./contracts";
 import { confirmAllocation, formatMoney, isEligibleReceipt, reconcile } from "./reconciliation";
 
 export type TriageFinding = {
@@ -24,6 +24,7 @@ export type ExceptionDesk = {
 export type AssociationPreview = {
   valid: boolean;
   message: string;
+  hasRefundAfter: boolean;
   confirmedBeforeMinor: number;
   confirmedAfterMinor: number;
   remainingAfterMinor: number;
@@ -56,26 +57,25 @@ function addLink(index: Map<string, Set<string>>, paymentId: string, invoiceId: 
 
 type RefundGroup = { invoiceIds: Set<string>; paymentIds: Set<string>; adjustmentIds: Set<string>; flaggedReceiptIds: Set<string> };
 
-export function buildExceptionDesk(dataset: Dataset, review: ReviewState): ExceptionDesk {
-  const reconciliation = reconcile(dataset, review);
+export function buildExceptionDesk(dataset: Dataset, review: ReviewState, precomputed?: Reconciliation): ExceptionDesk {
+  const reconciliation = precomputed ?? reconcile(dataset, review);
   const invoiceIds = new Set(dataset.invoices.map((invoice) => invoice.id));
   const paymentMap = new Map(dataset.payments.map((payment) => [payment.id, payment]));
   const unallocated = new Map(reconciliation.unallocatedPayments.map((payment) => [payment.id, payment]));
   const candidatesByReceipt = new Map<string, Set<string>>();
-  const evidenceInvoices = new Map<string, Set<string>>();
+  const associatedInvoices = new Map<string, Set<string>>();
   const receiptsByProvider = new Map<string, Payment[]>();
   const findings: TriageFinding[] = [];
 
   dataset.payments.forEach((payment) => {
     if (payment.kind === "receipt") receiptsByProvider.set(payment.providerId, [...(receiptsByProvider.get(payment.providerId) ?? []), payment]);
-    if (invoiceIds.has(invoiceReference(payment))) addLink(evidenceInvoices, payment.id, invoiceReference(payment));
+    if (invoiceIds.has(invoiceReference(payment))) addLink(associatedInvoices, payment.id, invoiceReference(payment));
   });
   reconciliation.rows.forEach((row) => {
     row.candidatePayments.forEach((candidate) => {
-      addLink(evidenceInvoices, candidate.payment.id, row.invoice.id);
       if (candidate.eligible && unallocated.has(candidate.payment.id)) addLink(candidatesByReceipt, candidate.payment.id, row.invoice.id);
     });
-    row.confirmedPayments.forEach((payment) => addLink(evidenceInvoices, payment.id, row.invoice.id));
+    row.confirmedPayments.forEach((payment) => addLink(associatedInvoices, payment.id, row.invoice.id));
   });
 
   candidatesByReceipt.forEach((possibleInvoices, paymentId) => {
@@ -101,7 +101,7 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState): Excep
       const group = refundGroup(`transaction:${payment.providerId}`);
       group.paymentIds.add(payment.id);
       group.flaggedReceiptIds.add(payment.id);
-      evidenceInvoices.get(payment.id)?.forEach((id) => group.invoiceIds.add(id));
+      associatedInvoices.get(payment.id)?.forEach((id) => group.invoiceIds.add(id));
     }
     if (!isAdjustment(payment)) return;
     const transactionId = payment.referenceType === "TXN" ? payment.referenceId?.trim() : null;
@@ -111,7 +111,7 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState): Excep
     if (invoiceIds.has(invoiceReference(payment))) group.invoiceIds.add(invoiceReference(payment));
     if (transactionId) (receiptsByProvider.get(transactionId) ?? []).forEach((receipt) => {
       group.paymentIds.add(receipt.id);
-      evidenceInvoices.get(receipt.id)?.forEach((id) => group.invoiceIds.add(id));
+      associatedInvoices.get(receipt.id)?.forEach((id) => group.invoiceIds.add(id));
     });
   });
   refundGroups.forEach((group, key) => {
@@ -131,7 +131,7 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState): Excep
   const pendingPayments = dataset.payments.filter((payment) => payment.kind === "receipt" && payment.status === "pending" && payment.currency === "USD" && payment.grossMinor > 0);
   const pendingInvoices = new Set<string>();
   pendingPayments.forEach((payment) => {
-    const linkedInvoices = [...(evidenceInvoices.get(payment.id) ?? [])];
+    const linkedInvoices = [...(associatedInvoices.get(payment.id) ?? [])];
     linkedInvoices.forEach((id) => pendingInvoices.add(id));
     findings.push(finding({
       id: `pending:${payment.id}`, kind: "pending", priority: "low", title: "Receipt is still pending",
@@ -142,7 +142,7 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState): Excep
 
   const unsupportedInvoices = new Set<string>();
   dataset.payments.filter((payment) => payment.status === "unsupported" || payment.kind === "other" || (payment.kind === "receipt" && payment.status === "completed" && !isEligibleReceipt(payment))).forEach((payment) => {
-    const linkedInvoices = [...(evidenceInvoices.get(payment.id) ?? [])];
+    const linkedInvoices = [...(associatedInvoices.get(payment.id) ?? [])];
     linkedInvoices.forEach((id) => unsupportedInvoices.add(id));
     findings.push(finding({
       id: `unsupported:${payment.id}`, kind: "unsupported", priority: "medium", title: "Transaction semantics are unsupported",
@@ -201,11 +201,11 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState): Excep
   };
 }
 
-export function previewAssociation(dataset: Dataset, review: ReviewState, invoiceId: string, paymentIds: string[]): AssociationPreview {
+export function previewAssociation(dataset: Dataset, review: ReviewState, invoiceId: string, paymentIds: string[], precomputed?: Reconciliation): AssociationPreview {
   let confirmedBeforeMinor = 0;
   let remainingBeforeMinor = 0;
   try {
-    const before = reconcile(dataset, review);
+    const before = precomputed ?? reconcile(dataset, review);
     const invoice = before.rows.find((row) => row.invoice.id === invoiceId);
     if (!invoice) throw new Error("The selected invoice is no longer available.");
     confirmedBeforeMinor = invoice.confirmedGrossMinor;
@@ -228,8 +228,8 @@ export function previewAssociation(dataset: Dataset, review: ReviewState, invoic
           : remainingAfterMinor === 0
             ? `Confirmed gross would equal the invoice amount of ${formatMoney(result.confirmedGrossMinor)}. Fees remain separate from invoice coverage.`
             : `Confirmed gross would be ${formatMoney(result.confirmedGrossMinor)}; ${formatMoney(remainingAfterMinor)} would remain without a confirmed allocation in the loaded data.`;
-    return { valid: true, message, confirmedBeforeMinor, confirmedAfterMinor: result.confirmedGrossMinor, remainingAfterMinor, affectedInvoiceIds: ordered(affectedInvoiceIds) };
+    return { valid: true, message, hasRefundAfter: result.status === "refund", confirmedBeforeMinor, confirmedAfterMinor: result.confirmedGrossMinor, remainingAfterMinor, affectedInvoiceIds: ordered(affectedInvoiceIds) };
   } catch (error) {
-    return { valid: false, message: error instanceof Error ? error.message : "This association cannot be confirmed from the available evidence.", confirmedBeforeMinor, confirmedAfterMinor: confirmedBeforeMinor, remainingAfterMinor: remainingBeforeMinor, affectedInvoiceIds: [] };
+    return { valid: false, message: error instanceof Error ? error.message : "This association cannot be confirmed from the available evidence.", hasRefundAfter: false, confirmedBeforeMinor, confirmedAfterMinor: confirmedBeforeMinor, remainingAfterMinor: remainingBeforeMinor, affectedInvoiceIds: [] };
   }
 }

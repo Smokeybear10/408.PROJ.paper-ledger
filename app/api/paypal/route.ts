@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { MAX_MINOR, MAX_ROWS, paymentSchema, paypalRequestSchema, paypalResponseSchema, type Payment, type PayPalRequest } from "@/lib/contracts";
+import { MAX_MINOR, MAX_ROWS, paymentSchema, paypalApiRequestSchema, paypalConnectionRequestSchema, paypalConnectionStatusSchema, paypalResponseSchema, type Payment, type PayPalConnectionRequest, type PayPalConnectionStatus, type PayPalRequest } from "@/lib/contracts";
 import { ApiFailure, apiError, apiJson, fetchProviderJson, readLocalRequest } from "@/lib/server-boundary";
 
 export const runtime = "nodejs";
@@ -48,8 +48,74 @@ const captureSchema = z.object({
   payee: z.object({ merchant_id: accountIdentityValueSchema.optional() }).optional(),
 });
 
-let cachedToken: { value: string; expiresAt: number; credentials: string } | null = null;
-let pendingToken: { credentials: string; promise: Promise<string> } | null = null;
+type SandboxToken = { value: string; expiresAt: number };
+type SandboxConnection = {
+  id: string;
+  clientId: string;
+  clientSecret: string;
+  source: "environment" | "memory";
+  authenticated: boolean;
+  token: SandboxToken | null;
+  pendingToken: Promise<string> | null;
+  controller: AbortController;
+};
+type ConnectionAttempt = { controller: AbortController };
+type SandboxStore = { version: 1; connection: SandboxConnection | null; attempt: ConnectionAttempt | null };
+const processState = globalThis as typeof globalThis & { __paperLedgerPayPalSession_v1?: SandboxStore };
+
+function newConnection(clientId: string, clientSecret: string, source: SandboxConnection["source"]): SandboxConnection {
+  return { id: randomUUID(), clientId, clientSecret, source, authenticated: false, token: null, pendingToken: null, controller: new AbortController() };
+}
+
+function sessionStore(): SandboxStore {
+  if (!processState.__paperLedgerPayPalSession_v1) {
+    const credentials = paypalConnectionRequestSchema.safeParse({ operation: "connect", clientId: process.env.PAYPAL_CLIENT_ID, clientSecret: process.env.PAYPAL_CLIENT_SECRET });
+    const connection = credentials.success && credentials.data.operation === "connect" ? newConnection(credentials.data.clientId, credentials.data.clientSecret, "environment") : null;
+    processState.__paperLedgerPayPalSession_v1 = { version: 1, connection, attempt: null };
+  }
+  return processState.__paperLedgerPayPalSession_v1;
+}
+
+function connectionStatus(): PayPalConnectionStatus {
+  const connection = sessionStore().connection;
+  return paypalConnectionStatusSchema.parse({ connected: connection !== null, authenticated: connection?.authenticated ?? false, source: connection?.source ?? null, connectionId: connection?.id ?? null });
+}
+
+function connectionChanged(): ApiFailure {
+  return new ApiFailure(409, "paypal_connection_changed", "The sandbox connection changed. Fetch its current status and request a new preview.");
+}
+
+function assertCurrent(connection: SandboxConnection): void {
+  if (sessionStore().connection !== connection || connection.controller.signal.aborted) throw connectionChanged();
+}
+
+function selectedConnection(connectionId: string): SandboxConnection {
+  const connection = sessionStore().connection;
+  if (!connection) throw new ApiFailure(503, "paypal_not_configured", "Connect your sandbox app with its client ID and secret. Your current records have been kept.");
+  if (connection.id !== connectionId) throw connectionChanged();
+  assertCurrent(connection);
+  return connection;
+}
+
+function retireConnection(connection: SandboxConnection | null): void {
+  if (!connection) return;
+  connection.controller.abort();
+  connection.clientId = "";
+  connection.clientSecret = "";
+  connection.token = null;
+  connection.pendingToken = null;
+  connection.authenticated = false;
+}
+
+function disconnect(): PayPalConnectionStatus {
+  const store = sessionStore();
+  store.attempt?.controller.abort();
+  store.attempt = null;
+  const previous = store.connection;
+  store.connection = null;
+  retireConnection(previous);
+  return connectionStatus();
+}
 
 function providerData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data);
@@ -74,50 +140,97 @@ function checkComponents(gross: number, fee: number | null, net: number | null):
   }
 }
 
-async function token(forceRefresh = false): Promise<string> {
-  const clientId = process.env.PAYPAL_CLIENT_ID?.trim();
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) throw new ApiFailure(503, "paypal_not_configured", "Add PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to the local server environment, then restart the app.");
-  const credentials = createHash("sha256").update(`${clientId}\0${clientSecret}`).digest("hex");
-  if (!forceRefresh && cachedToken?.credentials === credentials && cachedToken.expiresAt > Date.now()) return cachedToken.value;
-  if (pendingToken?.credentials === credentials) return pendingToken.promise;
-  const promise = (async () => {
-    const response = await fetchProviderJson(`${PAYPAL_HOST}/v1/oauth2/token`, {
-      method: "POST",
-      headers: { Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: "grant_type=client_credentials",
-    }, 15_000, 32 * 1024);
-    if (response.status === 401 || response.status === 403) throw new ApiFailure(502, "paypal_authentication_failed", "PayPal rejected the sandbox credentials. Check the app's client ID and secret.");
-    if (response.status < 200 || response.status >= 300) throw new ApiFailure(502, "paypal_authentication_failed", "PayPal could not issue a sandbox access token. Try again.");
-    const result = providerData(tokenSchema, response.data);
-    cachedToken = { value: result.access_token, credentials, expiresAt: Date.now() + Math.max(0, result.expires_in - 30) * 1000 };
-    return result.access_token;
-  })();
-  pendingToken = { credentials, promise };
+async function requestToken(connection: SandboxConnection, signal: AbortSignal): Promise<SandboxToken> {
+  const response = await fetchProviderJson(`${PAYPAL_HOST}/v1/oauth2/token`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${Buffer.from(`${connection.clientId}:${connection.clientSecret}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: "grant_type=client_credentials",
+    signal,
+  }, 15_000, 32 * 1024);
+  if (response.status === 401 || response.status === 403) throw new ApiFailure(502, "paypal_authentication_failed", "PayPal rejected the sandbox app credentials. Check its client ID and secret.");
+  if (response.status < 200 || response.status >= 300) throw new ApiFailure(502, "paypal_authentication_failed", "PayPal could not issue a sandbox access token. Try again.");
+  const result = providerData(tokenSchema, response.data);
+  return { value: result.access_token, expiresAt: Date.now() + Math.max(0, result.expires_in - 30) * 1000 };
+}
+
+async function connect(input: Extract<PayPalConnectionRequest, { operation: "connect" }>, signal: AbortSignal): Promise<PayPalConnectionStatus> {
+  const store = sessionStore();
+  store.attempt?.controller.abort();
+  const attempt = { controller: new AbortController() };
+  store.attempt = attempt;
+  const candidate = newConnection(input.clientId, input.clientSecret, "memory");
   try {
-    return await promise;
+    const combinedSignal = AbortSignal.any([signal, attempt.controller.signal, candidate.controller.signal]);
+    const result = await requestToken(candidate, combinedSignal);
+    if (store.attempt !== attempt) throw connectionChanged();
+    if (combinedSignal.aborted) throw new ApiFailure(499, "request_cancelled", "The sandbox connection request was cancelled.");
+    candidate.token = result;
+    candidate.authenticated = true;
+    const previous = store.connection;
+    store.connection = candidate;
+    retireConnection(previous);
+    return connectionStatus();
+  } catch (error) {
+    if (store.attempt !== attempt) throw connectionChanged();
+    throw error;
   } finally {
-    if (pendingToken?.promise === promise) pendingToken = null;
+    if (store.attempt === attempt) store.attempt = null;
+    if (store.connection !== candidate) retireConnection(candidate);
   }
 }
 
-async function paypalGet(path: string, signal: AbortSignal): Promise<unknown> {
-  let accessToken = await token();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetchProviderJson(`${PAYPAL_HOST}${path}`, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "PayPal-Enforce-ISO8601-Format": "true" }, signal }, 20_000);
-    if (response.status === 401 && attempt === 0) {
-      if (cachedToken?.value === accessToken) cachedToken = null;
-      accessToken = await token(true);
-      continue;
+async function token(connection: SandboxConnection, forceRefresh = false): Promise<string> {
+  assertCurrent(connection);
+  if (!forceRefresh && connection.token && connection.token.expiresAt > Date.now()) return connection.token.value;
+  if (connection.pendingToken) return connection.pendingToken;
+  const promise = (async () => {
+    try {
+      const result = await requestToken(connection, connection.controller.signal);
+      assertCurrent(connection);
+      connection.token = result;
+      connection.authenticated = true;
+      return result.value;
+    } catch (error) {
+      assertCurrent(connection);
+      if (error instanceof ApiFailure && error.code === "paypal_authentication_failed") connection.authenticated = false;
+      throw error;
     }
-    if (response.status === 401) throw new ApiFailure(502, "paypal_authentication_failed", "PayPal rejected the refreshed access token. Check the sandbox app credentials.");
-    if (response.status === 403) throw new ApiFailure(502, "paypal_permission_denied", "The sandbox app does not have access to this record or reporting operation. Check its merchant and reporting permissions.");
-    if (response.status === 404) throw new ApiFailure(404, "paypal_record_not_found", "That capture was not found for this sandbox merchant.");
-    if (response.status === 429) throw new ApiFailure(429, "paypal_rate_limited", "PayPal is limiting requests. Wait briefly and try again.");
-    if (response.status < 200 || response.status >= 300) throw new ApiFailure(502, "paypal_request_failed", "PayPal could not complete this sandbox request. Check the requested dates or capture ID and try again.");
-    return response.data;
+  })();
+  connection.pendingToken = promise;
+  try {
+    return await promise;
+  } finally {
+    if (connection.pendingToken === promise) connection.pendingToken = null;
   }
-  throw new ApiFailure(502, "paypal_authentication_failed", "PayPal authentication failed.");
+}
+
+async function paypalGet(connection: SandboxConnection, path: string, signal: AbortSignal): Promise<unknown> {
+  try {
+    let accessToken = await token(connection);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assertCurrent(connection);
+      const response = await fetchProviderJson(`${PAYPAL_HOST}${path}`, { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "PayPal-Enforce-ISO8601-Format": "true" }, signal: AbortSignal.any([signal, connection.controller.signal]) }, 20_000);
+      assertCurrent(connection);
+      if (response.status === 401 && attempt === 0) {
+        if (connection.token?.value === accessToken) connection.token = null;
+        accessToken = await token(connection, true);
+        continue;
+      }
+      if (response.status === 401) {
+        connection.authenticated = false;
+        throw new ApiFailure(502, "paypal_authentication_failed", "PayPal rejected the refreshed access token. Check the sandbox app credentials.");
+      }
+      if (response.status === 403) throw new ApiFailure(502, "paypal_permission_denied", "The sandbox app does not have access to this record or reporting operation. Check its merchant and reporting permissions.");
+      if (response.status === 404) throw new ApiFailure(404, "paypal_record_not_found", "That capture was not found for this sandbox merchant.");
+      if (response.status === 429) throw new ApiFailure(429, "paypal_rate_limited", "PayPal is limiting requests. Wait briefly and try again.");
+      if (response.status < 200 || response.status >= 300) throw new ApiFailure(502, "paypal_request_failed", "PayPal could not complete this sandbox request. Check the requested dates or capture ID and try again.");
+      return response.data;
+    }
+    throw new ApiFailure(502, "paypal_authentication_failed", "PayPal authentication failed.");
+  } catch (error) {
+    assertCurrent(connection);
+    throw error;
+  }
 }
 
 function capturePayment(capture: z.infer<typeof captureSchema>, captureId: string): Payment {
@@ -149,7 +262,7 @@ function reportPayment(data: unknown, row: number): Payment {
   let status: Payment["status"] = statuses[info.transaction_status] ?? "unsupported";
   let kind: Payment["kind"] = "other";
   if (info.transaction_status === "V") kind = "reversal";
-  else if (event === "T0006" && grossMinor > 0) kind = "receipt";
+  else if (["T0000", "T0006"].includes(event) && grossMinor > 0) kind = "receipt";
   else if (["T1107", "T1115", "T1120"].includes(event)) {
     kind = "refund";
     if (info.transaction_status === "S") status = "refunded";
@@ -173,7 +286,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-async function reporting(request: Extract<PayPalRequest, { operation: "transactions" }>, signal: AbortSignal) {
+async function reporting(connection: SandboxConnection, request: Extract<PayPalRequest, { operation: "transactions" }>, signal: AbortSignal) {
   const start = dateTimeSchema.safeParse(request.startDate);
   const end = dateTimeSchema.safeParse(request.endDate);
   if (!start.success || !end.success) throw new ApiFailure(400, "invalid_date_range", "Use RFC3339 dates with seconds and a timezone for the reporting window.");
@@ -192,7 +305,7 @@ async function reporting(request: Extract<PayPalRequest, { operation: "transacti
   let page = 1;
   do {
     const query = new URLSearchParams({ start_date: start.data, end_date: end.data, fields: "all", balance_affecting_records_only: "Y", page_size: "500", page: String(page) });
-    const result = providerData(reportSchema, await paypalGet(`/v1/reporting/transactions?${query}`, signal));
+    const result = providerData(reportSchema, await paypalGet(connection, `/v1/reporting/transactions?${query}`, signal));
     if (result.total_items > MAX_ROWS || result.total_pages > 2) throw new ApiFailure(422, "reporting_row_limit", "The reporting result exceeds 1,000 records. Reduce the date range and try again.");
     const validPageCount = result.total_items === 0 ? result.total_pages === 0 || result.total_pages === 1 : result.total_pages === Math.ceil(result.total_items / 500);
     const expectedLength = Math.min(500, Math.max(0, result.total_items - (page - 1) * 500));
@@ -226,16 +339,26 @@ async function reporting(request: Extract<PayPalRequest, { operation: "transacti
   } while (page <= (expectedPages ?? 1));
   if (rawCount !== expectedItems) throw new ApiFailure(502, "incomplete_paypal_pages", "PayPal returned an incomplete record count. The current dataset has not been replaced.");
   const timestamps = payments.map((payment) => payment.timestamp).sort((a, b) => Date.parse(a) - Date.parse(b));
-  return paypalResponseSchema.parse({ payments, source: { kind: "paypal", label: "PayPal sandbox reporting · requested window; reporting may lag", coverage: "bounded-window", rangeStart: timestamps[0], rangeEnd: timestamps.at(-1), requestedRangeStart: start.data, requestedRangeEnd: end.data, filters: [{ field: "fields", value: "all" }, { field: "balance_affecting_records_only", value: "Y" }, { field: "page_size", value: "500" }], accountIdentity: account ? { kind: "account_number", value: account } : null, fetchedAt: new Date().toISOString(), unsupportedCount: payments.filter((payment) => payment.status === "unsupported").length, duplicateCount, providerVerified: true } });
+  assertCurrent(connection);
+  return paypalResponseSchema.parse({ payments, connectionId: connection.id, source: { kind: "paypal", label: "PayPal sandbox reporting · requested window; reporting may lag", coverage: "bounded-window", rangeStart: timestamps[0], rangeEnd: timestamps.at(-1), requestedRangeStart: start.data, requestedRangeEnd: end.data, filters: [{ field: "fields", value: "all" }, { field: "balance_affecting_records_only", value: "Y" }, { field: "page_size", value: "500" }], accountIdentity: account ? { kind: "account_number", value: account } : null, fetchedAt: new Date().toISOString(), unsupportedCount: payments.filter((payment) => payment.status === "unsupported").length, duplicateCount, providerVerified: true } });
 }
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const input = await readLocalRequest(request, paypalRequestSchema);
-    if (input.operation === "transactions") return apiJson(await reporting(input, request.signal));
-    const capture = providerData(captureSchema, await paypalGet(`/v2/payments/captures/${encodeURIComponent(input.captureId)}`, request.signal));
+    const input = await readLocalRequest(request, paypalApiRequestSchema);
+    if (input.operation === "status") return apiJson(connectionStatus());
+    if (input.operation === "connect") return apiJson(await connect(input, request.signal));
+    if (input.operation === "disconnect") return apiJson(disconnect());
+    const connection = selectedConnection(input.connectionId);
+    if (input.operation === "transactions") {
+      const result = await reporting(connection, input, request.signal);
+      assertCurrent(connection);
+      return apiJson(result);
+    }
+    const capture = providerData(captureSchema, await paypalGet(connection, `/v2/payments/captures/${encodeURIComponent(input.captureId)}`, request.signal));
     const payment = capturePayment(capture, input.captureId);
-    return apiJson(paypalResponseSchema.parse({ payments: [payment], source: { kind: "paypal", label: "PayPal sandbox · one capture only", coverage: "single-record", rangeStart: payment.timestamp, rangeEnd: payment.timestamp, filters: [{ field: "capture_id", value: capture.id }], accountIdentity: capture.payee?.merchant_id ? { kind: "merchant_id", value: capture.payee.merchant_id } : null, fetchedAt: new Date().toISOString(), unsupportedCount: payment.status === "unsupported" ? 1 : 0, duplicateCount: 0, providerVerified: true } }));
+    assertCurrent(connection);
+    return apiJson(paypalResponseSchema.parse({ payments: [payment], connectionId: connection.id, source: { kind: "paypal", label: "PayPal sandbox · one capture only", coverage: "single-record", rangeStart: payment.timestamp, rangeEnd: payment.timestamp, filters: [{ field: "capture_id", value: capture.id }], accountIdentity: capture.payee?.merchant_id ? { kind: "merchant_id", value: capture.payee.merchant_id } : null, fetchedAt: new Date().toISOString(), unsupportedCount: payment.status === "unsupported" ? 1 : 0, duplicateCount: 0, providerVerified: true } }));
   } catch (error) {
     return apiError(error);
   }

@@ -3,6 +3,7 @@ import {
   MAX_FILE_BYTES,
   MAX_MINOR,
   MAX_ROWS,
+  evidenceInvoiceSchema,
   invoiceSchema,
   investigationRequestSchema,
   paymentSchema,
@@ -23,7 +24,7 @@ import {
 export const EMPTY_REVIEW: ReviewState = { allocations: [], rejections: [], revision: 0 };
 
 const RECEIPT_EVENTS = new Set([
-  "T0006", "CAPTURE", "RECEIPT", "PAYMENT_RECEIVED", "EXPRESS_CHECKOUT_PAYMENT", "GENERAL_PAYMENT", "WEB_ACCEPT_PAYMENT",
+  "T0000", "T0006", "CAPTURE", "RECEIPT", "PAYMENT_RECEIVED", "EXPRESS_CHECKOUT_PAYMENT", "GENERAL_PAYMENT", "WEB_ACCEPT_PAYMENT",
 ]);
 const REFUND_EVENTS = new Set(["T1107", "REFUND", "PAYMENT_REFUND"]);
 const REVERSAL_EVENTS = new Set(["REVERSAL", "PAYMENT_REVERSAL"]);
@@ -69,7 +70,31 @@ type CsvData = { headers: string[]; rows: string[][]; issues: ImportIssue[] };
 
 function readCsv(text: string): CsvData {
   if (new TextEncoder().encode(text).byteLength > MAX_FILE_BYTES) return { headers: [], rows: [], issues: [{ row: 1, message: "Files must be 2 MB or smaller." }] };
-  const parsed = Papa.parse<string[]>(text, { skipEmptyLines: "greedy" });
+  const delimiter = Papa.parse<string[]>(text, { preview: 1, skipEmptyLines: "greedy" }).meta.delimiter;
+  const parts: string[] = [];
+  let quoted = false;
+  let fieldStart = true;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (index === 0 && character === "\uFEFF") continue;
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') { index += 1; continue; }
+      if (quoted || fieldStart) { quoted = !quoted; fieldStart = false; }
+      continue;
+    }
+    if (quoted) continue;
+    if (character === "\r") {
+      parts.push(text.slice(start, index), "\n");
+      if (text[index + 1] === "\n") index += 1;
+      start = index + 1;
+      fieldStart = true;
+      continue;
+    }
+    fieldStart = character === "\n" || character === delimiter;
+  }
+  const normalized = parts.length ? parts.join("") + text.slice(start) : text;
+  const parsed = Papa.parse<string[]>(normalized, { skipEmptyLines: "greedy", newline: "\n" });
   const [first = [], ...rows] = parsed.data;
   const headers = first.map((header) => header.replace(/^\uFEFF/, "").trim());
   const issues: ImportIssue[] = parsed.errors.map((error) => ({ row: (error.row ?? 0) + 1, message: error.message }));
@@ -94,6 +119,7 @@ const invoiceAliases: Record<string, string[]> = {
   id: ["invoice_id", "invoice id", "invoice", "id", "invoice number", "Invoice Number Text"],
   customer: ["customer", "customer_name", "customer name", "client", "name"],
   customerKey: ["customer_key", "customer_id", "customer email", "customer_email", "email"],
+  description: ["description", "invoice_description", "invoice description", "service_description", "service description", "item_description", "item description", "project"],
   amount: ["amount", "invoice_amount", "total", "invoice total"],
   currency: ["currency", "currency_code"],
   dueDate: ["due_date", "due date", "due", "dueDate"],
@@ -111,8 +137,9 @@ const paymentAliases: Record<string, string[]> = {
   fee: ["fee_cost", "fee", "fee_amount"],
   net: ["net", "net_amount"],
   invoiceId: ["invoice_id", "invoice number text", "invoice number", "invoice reference"],
-  referenceId: ["reference_id", "reference txn id", "related_transaction_id", "paypal_reference_id"],
+  referenceId: ["reference_id", "reference txn id", "reference transaction id", "related_transaction_id", "paypal_reference_id"],
   referenceType: ["reference_type", "paypal_reference_id_type"],
+  balanceImpact: ["balance impact", "balance_impact"],
   customerKey: ["customer_key", "customer_id", "payer_id", "from email address", "payer_email", "customer email"],
   memo: ["memo", "note", "subject", "transaction_subject", "remittance"],
 };
@@ -132,6 +159,42 @@ function columns(headers: string[], aliases: Record<string, string[]>, mapping: 
   return { indexes, issues };
 }
 
+export type PaymentImportProfile = {
+  format: "paypal-activity" | "normalized";
+  label: string;
+  feeMode: "bridge-verified" | "fee-cost";
+  hasBalanceImpact: boolean;
+  notes: string[];
+};
+
+function paymentImportProfile(headers: string[], indexes: Record<string, number>): PaymentImportProfile {
+  const normalized = new Set(headers.map(normalizeHeader));
+  const activity = ["date", "time", "timezone", "type", "status", "currency", "gross", "fee", "net", "transactionid"].every((field) => normalized.has(field));
+  const feeMode = activity && normalizeHeader(headers[indexes.fee] ?? "") === "fee" ? "bridge-verified" : "fee-cost";
+  const hasBalanceImpact = indexes.balanceImpact >= 0;
+  return {
+    format: activity ? "paypal-activity" : "normalized",
+    label: activity ? "US PayPal Activity columns" : "Normalized payment CSV",
+    feeMode,
+    hasBalanceImpact,
+    notes: activity ? [
+      "US dates use MM/DD/YYYY. Supplied times require a supported US time zone, UTC/GMT or a numeric offset.",
+      feeMode === "bridge-verified" ? "Fee signs are accepted only when Gross, Fee and Net prove the exact bridge. A nonzero Fee without Net requires correction." : "The mapped fee column is a signed fee cost: gross minus fee cost must equal net when both are supplied.",
+      hasBalanceImpact ? "Memo rows and incompatible balance directions remain unsupported evidence, outside invoice coverage." : "Balance Impact is not supplied. Only recognized completed incoming receipt types can support coverage.",
+      "The file stays unverified. Unknown event types and invoice-only statuses do not establish settled receipts.",
+    ] : [
+      "Dates use ISO format. Fee cost is positive for a charge and negative for a credited fee; unknown fee/net values stay unknown.",
+      "The file stays unverified. Unknown event types do not establish settled receipts.",
+    ],
+  };
+}
+
+export function getPaymentImportProfile(text: string, mapping: ColumnMapping = {}): PaymentImportProfile {
+  const csv = readCsv(text);
+  const resolved = columns(csv.headers, paymentAliases, mapping, []);
+  return paymentImportProfile(csv.headers, resolved.indexes);
+}
+
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -139,7 +202,6 @@ function validDate(value: string): boolean {
 }
 
 function paymentDate(value: string, raw: Record<string, string>, activity: boolean): string {
-  if (validDate(value)) return value;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
     const time = value.slice(11, 19).split(":").map(Number);
     const offset = value.match(/[+-](\d{2}):(\d{2})$/);
@@ -147,18 +209,19 @@ function paymentDate(value: string, raw: Record<string, string>, activity: boole
   }
   if (activity) {
     const date = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (date) {
-      const iso = `${date[3]}-${date[1].padStart(2, "0")}-${date[2].padStart(2, "0")}`;
-      if (validDate(iso)) {
-        const time = Object.entries(raw).find(([key]) => normalizeHeader(key) === "time")?.[1].trim() ?? "";
-        if (!time) return iso;
-        const zone = Object.entries(raw).find(([key]) => normalizeHeader(key) === "timezone")?.[1].trim().toUpperCase() ?? "";
-        const offsets: Record<string, string> = { UTC: "Z", GMT: "Z", PST: "-08:00", PDT: "-07:00", MST: "-07:00", MDT: "-06:00", CST: "-06:00", CDT: "-05:00", EST: "-05:00", EDT: "-04:00" };
-        const offset = offsets[zone] ?? (/^[+-]\d{2}:\d{2}$/.test(zone) ? zone : "");
-        if (offset) return paymentDate(`${iso}T${time}${offset}`, {}, false);
-      }
+    const iso = date ? `${date[3]}-${date[1].padStart(2, "0")}-${date[2].padStart(2, "0")}` : value;
+    if (validDate(iso)) {
+      const time = Object.entries(raw).find(([key]) => normalizeHeader(key) === "time")?.[1].trim() ?? "";
+      if (!time) return iso;
+      if (!/^\d{2}:\d{2}:\d{2}$/.test(time)) throw new Error("US PayPal Activity Time must use HH:MM:SS.");
+      const zone = Object.entries(raw).find(([key]) => normalizeHeader(key) === "timezone")?.[1].trim().toUpperCase() ?? "";
+      const offsets: Record<string, string> = { UTC: "Z", GMT: "Z", PST: "-08:00", PDT: "-07:00", MST: "-07:00", MDT: "-06:00", CST: "-06:00", CDT: "-05:00", EST: "-05:00", EDT: "-04:00" };
+      const offset = offsets[zone] ?? (/^[+-]\d{2}:\d{2}$/.test(zone) ? zone : "");
+      if (offset) return paymentDate(`${iso}T${time}${offset}`, {}, false);
+      throw new Error("US PayPal Activity TimeZone must be a supported US abbreviation, UTC/GMT or a numeric offset such as -05:00.");
     }
   }
+  if (validDate(value)) return value;
   throw new Error("Use an ISO date or timestamp, or a US PayPal Activity date with a supported time zone.");
 }
 
@@ -185,7 +248,7 @@ export function parseInvoiceCsv(text: string, mapping: ColumnMapping = {}): Impo
     try {
       const dueDate = get("dueDate");
       if (!validDate(dueDate)) throw new Error("dueDate: Use a valid ISO date in YYYY-MM-DD format.");
-      const parsed = invoiceSchema.safeParse({ id: get("id"), customer: get("customer"), customerKey: get("customerKey") || get("customer").toLowerCase(), currency: get("currency"), amountMinor: parseMoney(get("amount")), dueDate, sourceRow: row, raw: rawRow(csv.headers, values) });
+      const parsed = invoiceSchema.safeParse({ id: get("id"), customer: get("customer"), customerKey: get("customerKey") || get("customer").toLowerCase(), ...(resolved.indexes.description >= 0 ? { description: get("description") } : {}), currency: get("currency"), amountMinor: parseMoney(get("amount")), dueDate, sourceRow: row, raw: rawRow(csv.headers, values) });
       if (!parsed.success) { issues.push(...schemaIssues(row, parsed.error.issues)); return; }
       const previous = ids.get(parsed.data.id);
       if (previous !== undefined) issues.push({ row, message: `Invoice ID ${parsed.data.id} also appears on row ${previous}; invoice IDs must be unique.` });
@@ -228,8 +291,10 @@ export function parsePaymentCsv(text: string, mapping: ColumnMapping = {}): Impo
   if (csv.issues.length) return { records: [], issues: csv.issues, duplicateCount: 0 };
   const resolved = columns(csv.headers, paymentAliases, mapping, ["providerId", "timestamp", "status", "currency", "gross"]);
   if (resolved.issues.length) return { records: [], issues: resolved.issues, duplicateCount: 0 };
-  const activity = ["transactionid", "type", "gross", "fee", "net"].every((field) => csv.headers.some((header) => normalizeHeader(header) === field));
-  const providerFee = activity && normalizeHeader(csv.headers[resolved.indexes.fee] ?? "") === "fee";
+  const profile = paymentImportProfile(csv.headers, resolved.indexes);
+  const activity = profile.format === "paypal-activity";
+  const invoiceReferenceHeaders = new Set(paymentAliases.invoiceId.map(normalizeHeader));
+  const invoiceReferenceIndexes = mapping.invoiceId === undefined && activity ? csv.headers.flatMap((header, index) => invoiceReferenceHeaders.has(normalizeHeader(header)) ? [index] : []) : [resolved.indexes.invoiceId];
   const records: Payment[] = [];
   const issues: ImportIssue[] = [];
   const observations = new Map<string, Payment>();
@@ -255,15 +320,28 @@ export function parsePaymentCsv(text: string, mapping: ColumnMapping = {}): Impo
       let status = normalizeStatus(get("status"));
       if (suppliedKind && mappedKind !== "other" && suppliedKind !== mappedKind) throw new Error("The supplied payment kind contradicts the event type.");
       if (mappedKind === "other" || (kind === "receipt" && grossMinor <= 0)) { kind = "other"; status = "unsupported"; }
+      const balanceImpact = normalizeEvent(get("balanceImpact"));
+      const unknownImpact = balanceImpact !== "" && !["CREDIT", "DEBIT", "MEMO"].includes(balanceImpact);
+      if (unknownImpact || balanceImpact === "MEMO" || (kind === "receipt" && balanceImpact === "DEBIT") || ((kind === "refund" || kind === "reversal") && balanceImpact === "CREDIT")) { kind = "other"; status = "unsupported"; }
       if ((kind === "refund" || kind === "reversal") && grossMinor >= 0) throw new Error("Refund and reversal gross amounts must be negative from the merchant perspective.");
       const parsedFee = optionalAmount(get("fee"));
-      const feeMinor = parsedFee === null ? null : providerFee ? -parsedFee : parsedFee;
       const netMinor = optionalAmount(get("net"));
+      let feeMinor = parsedFee;
+      if (parsedFee !== null && profile.feeMode === "bridge-verified") {
+        if (netMinor === null && parsedFee !== 0) throw new Error("A nonzero PayPal Activity Fee needs Net to prove its sign. Supply Net or explicitly map a signed fee_cost column.");
+        if (netMinor !== null) {
+          const bridgeCost = safeSum([grossMinor, -netMinor]);
+          if (parsedFee !== bridgeCost && parsedFee !== -bridgeCost) throw new Error("PayPal Activity Gross, Fee and Net do not form an exact bridge. Check the original amounts.");
+          feeMinor = bridgeCost;
+        }
+      }
       if (feeMinor !== null && netMinor !== null && safeSum([grossMinor, -feeMinor]) !== netMinor) throw new Error("Gross minus fee cost does not equal net. Check the amount signs and import mapping.");
       const providerId = get("providerId");
       const referenceId = get("referenceId") || null;
-      const type = get("referenceType").toUpperCase() || (referenceId && ["referencetxnid", "relatedtransactionid"].includes(normalizeHeader(csv.headers[resolved.indexes.referenceId] ?? "")) ? "TXN" : null);
-      const parsed = paymentSchema.safeParse({ id: get("id") || providerId, providerId, eventCode, referenceId, referenceType: type, invoiceId: get("invoiceId") || null, customerKey: get("customerKey") || null, status, kind, grossMinor, feeMinor, netMinor, currency: get("currency"), timestamp: paymentDate(get("timestamp"), raw, activity), memo: get("memo"), sourceRow: row, raw });
+      const type = get("referenceType").toUpperCase() || (referenceId && ["referencetxnid", "referencetransactionid", "relatedtransactionid"].includes(normalizeHeader(csv.headers[resolved.indexes.referenceId] ?? "")) ? "TXN" : null);
+      const invoiceReferences = [...new Set(invoiceReferenceIndexes.map((index) => values[index]?.trim() ?? "").filter(Boolean))];
+      if (invoiceReferences.length > 1) throw new Error("Invoice reference columns disagree. Map the intended invoice reference column before importing.");
+      const parsed = paymentSchema.safeParse({ id: get("id") || providerId, providerId, eventCode, referenceId, referenceType: type, invoiceId: invoiceReferences[0] || null, customerKey: get("customerKey") || null, status, kind, grossMinor, feeMinor, netMinor, currency: get("currency"), timestamp: paymentDate(get("timestamp"), raw, activity), memo: get("memo"), sourceRow: row, raw });
       if (!parsed.success) { issues.push(...schemaIssues(row, parsed.error.issues)); return; }
       const payment = parsed.data;
       const key = observationKey(payment);
@@ -346,7 +424,7 @@ function isRefundEvidence(payment: Payment): boolean {
   return payment.kind === "refund" || payment.kind === "reversal" || ["refunded", "partially_refunded", "reversed"].includes(payment.status);
 }
 
-function linkedAdjustment(payment: Payment, receipt: Payment): boolean {
+export function linkedAdjustment(payment: Payment, receipt: Payment): boolean {
   return isRefundEvidence(payment) && payment.referenceType === "TXN" && reference(payment.referenceId) === receipt.providerId;
 }
 
@@ -376,8 +454,8 @@ export function reconcile(dataset: Dataset, review: ReviewState): Reconciliation
     const available = (payment: Payment) => paymentMatchesInvoice(payment, invoice) && (!owners.has(payment.id) || owners.get(payment.id) === invoice.id) && !rejectedIds?.has(payment.id);
     const referenced = (byReference.get(reference(invoice.id)) ?? []).filter(available);
     const customerPool = byCustomer.get(customerKey(invoice.customerKey)) ?? [];
-    const customer = [...customerPool.filter((payment) => payment.grossMinor === invoice.amountMinor && available(payment) && !reference(payment.invoiceId)).slice(0, 20), ...customerPool.filter((payment) => payment.grossMinor !== invoice.amountMinor && available(payment) && !reference(payment.invoiceId)).slice(0, 20)].slice(0, 20);
-    const amount = (byAmount.get(String(invoice.amountMinor)) ?? []).filter((payment) => available(payment) && !reference(payment.invoiceId)).slice(0, 20);
+    const customer = customerPool.filter((payment) => available(payment) && !reference(payment.invoiceId));
+    const amount = (byAmount.get(String(invoice.amountMinor)) ?? []).filter((payment) => available(payment) && !reference(payment.invoiceId));
     const candidates = [...new Map([...referenced, ...customer, ...amount].map((payment) => [payment.id, payment])).values()];
     const candidatePayments: CandidatePayment[] = candidates.map((payment) => {
       const match: CandidatePayment["match"] = reference(payment.invoiceId) === reference(invoice.id) ? "reference" : customerKey(payment.customerKey) && customerKey(payment.customerKey) === customerKey(invoice.customerKey) ? "customer" : "amount";
@@ -389,10 +467,10 @@ export function reconcile(dataset: Dataset, review: ReviewState): Reconciliation
     const eligibleSuggestions = candidatePayments.filter((candidate) => candidate.eligible && !owners.has(candidate.payment.id));
     const directlyReferenced = eligibleSuggestions.filter((candidate) => candidate.match === "reference");
     const suggestedGrossMinor = directlyReferenced.length ? safeSum(directlyReferenced.map((candidate) => candidate.payment.grossMinor)) : eligibleSuggestions.length === 1 ? eligibleSuggestions[0].payment.grossMinor : 0;
-    const evidence = [...new Map([...candidates, ...confirmedPayments].map((payment) => [payment.id, payment])).values()];
-    const refunds = [...new Map([...(byReference.get(invoice.id) ?? []).filter(isRefundEvidence), ...evidence.flatMap((receipt) => adjustmentsByReceipt.get(receipt.providerId) ?? [])].map((payment) => [payment.id, payment])).values()];
-    const hasRefund = refunds.length > 0 || evidence.some(isRefundEvidence);
-    const pending = evidence.some((payment) => payment.kind === "receipt" && payment.status === "pending");
+    const associated = [...new Map([...referenced, ...confirmedPayments].map((payment) => [payment.id, payment])).values()];
+    const refunds = [...new Map([...(byReference.get(invoice.id) ?? []).filter(isRefundEvidence), ...associated.flatMap((receipt) => adjustmentsByReceipt.get(receipt.providerId) ?? [])].map((payment) => [payment.id, payment])).values()];
+    const hasRefund = refunds.length > 0 || associated.some(isRefundEvidence);
+    const pending = associated.some((payment) => payment.kind === "receipt" && payment.status === "pending");
     const unsupported = referenced.some((payment) => payment.status === "unsupported" || payment.kind === "other");
     const reasons: string[] = [];
     if (candidatePayments.some((candidate) => candidate.match !== "reference")) reasons.push("Amount or customer similarity proposes a candidate only; manual confirmation is required.");
@@ -435,7 +513,6 @@ export function confirmAllocation(dataset: Dataset, review: ReviewState, invoice
   });
   const existing = dataset.payments.filter((payment) => owners.get(payment.id) === invoiceId);
   const combined = [...new Map([...existing, ...selected].map((payment) => [payment.id, payment])).values()];
-  if (combined.length > 1 && combined.some((payment) => reference(payment.invoiceId) !== invoiceId)) throw new Error("Multiple receipts can cover one invoice only when every receipt directly references that invoice.");
   safeSum(combined.map((payment) => payment.grossMinor));
   const newPayments = selected.filter((payment) => !owners.has(payment.id));
   if (!newPayments.length) return review;
@@ -491,6 +568,7 @@ export function exportReconciliation(dataset: Dataset, review: ReviewState): str
     record_type: "invoice",
     invoice_id: safeText(row.invoice.id),
     customer: safeText(row.invoice.customer),
+    invoice_description: safeText(row.invoice.description ?? ""),
     currency: "USD",
     invoice_amount: decimalMoney(row.invoice.amountMinor),
     confirmed_gross: decimalMoney(row.confirmedGrossMinor),
@@ -541,9 +619,9 @@ export function exportReconciliation(dataset: Dataset, review: ReviewState): str
   return Papa.unparse({ fields, data: records.map((record) => fields.map((field) => record[field] ?? "")) }, { newline: "\r\n" });
 }
 
-type InvestigationContext = Pick<InvestigationRequest, "caseId" | "excerptPaymentId" | "invoices" | "payments">;
+type InvestigationContext = Pick<InvestigationRequest, "caseId" | "excerptPaymentId" | "invoices" | "payments" | "invoiceScope">;
 
-function investigationContext(dataset: Dataset, review: ReviewState, caseId: string, paymentId?: string): InvestigationContext {
+function investigationContext(dataset: Dataset, review: ReviewState, caseId: string, paymentId: string | undefined, invoiceContexts: Record<string, string>, invoiceScopeIds?: string[]): InvestigationContext {
   const reconciliation = reconcile(dataset, review);
   const selected = reconciliation.rows.find((row) => row.invoice.id === caseId);
   if (!selected) throw new Error("Select an invoice before investigating.");
@@ -553,8 +631,15 @@ function investigationContext(dataset: Dataset, review: ReviewState, caseId: str
   const owner = paymentId ? receiptOptions.find((payment) => payment.id === paymentId) : receiptOptions.length === 1 ? receiptOptions[0] : undefined;
   if (!owner) throw new Error(paymentId ? "The selected excerpt receipt is not available for this case." : "Select the receipt that owns the remittance excerpt before investigating.");
   const adjustments = dataset.payments.filter((payment) => linkedAdjustment(payment, owner));
-  const payments = [owner, ...adjustments.filter((payment) => payment.id !== owner.id).slice(0, 19)];
-  const invoiceRows = [selected, ...reconciliation.rows.filter((row) => row.invoice.id !== caseId && row.candidatePayments.some((candidate) => candidate.payment.id === owner.id))].slice(0, 20);
+  const payments = [owner, ...adjustments.filter((payment) => payment.id !== owner.id)];
+  const allInvoiceRows = [selected, ...reconciliation.rows.filter((row) => row.invoice.id !== caseId && row.candidatePayments.some((candidate) => candidate.payment.id === owner.id))];
+  if (invoiceScopeIds && (invoiceScopeIds.length === 0 || invoiceScopeIds.length > 20 || new Set(invoiceScopeIds).size !== invoiceScopeIds.length || !invoiceScopeIds.includes(caseId))) throw new Error("Choose 1–20 distinct invoice candidates and include the current invoice in the investigation scope.");
+  const relatedIds = new Set(allInvoiceRows.map((row) => row.invoice.id));
+  if (invoiceScopeIds?.some((id) => !relatedIds.has(id))) throw new Error("The investigation scope contains an invoice that is not a current candidate for this receipt.");
+  const scopedIds = invoiceScopeIds ? new Set(invoiceScopeIds) : null;
+  const invoiceRows = scopedIds ? allInvoiceRows.filter((row) => scopedIds.has(row.invoice.id)) : allInvoiceRows;
+  if (invoiceRows.length > 20) throw new Error(`This receipt has ${invoiceRows.length} related invoice candidates; AI investigations support at most 20. Select a temporary investigation scope without rejecting the other associations. No model request was sent.`);
+  if (payments.length > 20) throw new Error(`This receipt has ${payments.length - 1} linked adjustments (${payments.length} payment records total); AI investigations support at most 20 payment records. Narrow the loaded records or review this case manually. No model request was sent.`);
   const groups = new Map<string, string>();
   const group = (key: string | null) => {
     const normalized = customerKey(key);
@@ -565,8 +650,9 @@ function investigationContext(dataset: Dataset, review: ReviewState, caseId: str
   return {
     caseId,
     excerptPaymentId: owner.id,
-    invoices: invoiceRows.map(({ invoice }) => ({ id: invoice.id, amountMinor: invoice.amountMinor, currency: invoice.currency, dueDate: invoice.dueDate, customerGroup: group(invoice.customerKey) })),
+    invoices: invoiceRows.map(({ invoice }) => evidenceInvoiceSchema.parse({ id: invoice.id, amountMinor: invoice.amountMinor, currency: invoice.currency, dueDate: invoice.dueDate, customerGroup: group(invoice.customerKey), context: Object.hasOwn(invoiceContexts, invoice.id) ? invoiceContexts[invoice.id] : "" })),
     payments: payments.map((payment) => ({ id: payment.id, grossMinor: payment.grossMinor, feeMinor: payment.feeMinor, netMinor: payment.netMinor, currency: payment.currency, invoiceId: payment.invoiceId, status: payment.status, kind: payment.kind, eventCode: payment.eventCode, customerGroup: group(payment.customerKey) })),
+    ...(invoiceRows.length < allInvoiceRows.length ? { invoiceScope: { totalCandidates: allInvoiceRows.length, excludedCandidates: allInvoiceRows.length - invoiceRows.length } } : {}),
   };
 }
 
@@ -578,12 +664,12 @@ function fingerprintForContext(dataset: Dataset, review: ReviewState, context: I
   return fingerprint;
 }
 
-export function caseFingerprint(dataset: Dataset, review: ReviewState, caseId: string, excerpt: string, paymentId?: string): string {
-  return fingerprintForContext(dataset, review, investigationContext(dataset, review, caseId, paymentId), excerpt);
+export function caseFingerprint(dataset: Dataset, review: ReviewState, caseId: string, excerpt: string, paymentId?: string, invoiceContexts: Record<string, string> = {}, invoiceScopeIds?: string[]): string {
+  return fingerprintForContext(dataset, review, investigationContext(dataset, review, caseId, paymentId, invoiceContexts, invoiceScopeIds), excerpt);
 }
 
-export function buildInvestigationRequest(dataset: Dataset, review: ReviewState, caseId: string, excerpt: string, requestId: string, paymentId?: string): InvestigationRequest {
-  const context = investigationContext(dataset, review, caseId, paymentId);
+export function buildInvestigationRequest(dataset: Dataset, review: ReviewState, caseId: string, excerpt: string, requestId: string, paymentId?: string, invoiceContexts: Record<string, string> = {}, invoiceScopeIds?: string[]): InvestigationRequest {
+  const context = investigationContext(dataset, review, caseId, paymentId, invoiceContexts, invoiceScopeIds);
   return investigationRequestSchema.parse({ ...context, excerpt: excerpt.trim(), requestId, fingerprint: fingerprintForContext(dataset, review, context, excerpt) });
 }
 
