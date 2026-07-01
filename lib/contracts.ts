@@ -123,7 +123,14 @@ export const investigationRequestSchema = investigationContextSchema.extend({
   requestId: z.string().min(1).max(100),
   fingerprint: z.string().min(1).max(32768),
 }).refine((value) => !value.invoiceScope || value.invoiceScope.totalCandidates === value.invoices.length + value.invoiceScope.excludedCandidates, { path: ["invoiceScope"], message: "The selected and excluded invoice counts must equal the total candidate count." });
-export const investigationApiRequestSchema = investigationRequestSchema.safeExtend({ expectedProvider: z.enum(["codex", "gemini"]) });
+export const investigationApiRequestSchema = investigationRequestSchema.safeExtend({ expectedProvider: z.enum(["codex", "gemini"]), includeCandidateAssessments: z.boolean().optional() });
+export const candidateAssessmentSchema = z.object({
+  invoiceId: idSchema,
+  stance: z.enum(["supports", "contradicts", "unknown"]),
+  quote: z.string().max(240),
+  contextQuote: z.string().max(240).nullable(),
+  evidenceIds: z.array(z.string().min(1).max(240)).min(1).max(4),
+}).strict();
 export const proposalSchema = z.object({
   invoiceId: idSchema.nullable(),
   paymentIds: z.array(idSchema).max(5),
@@ -133,6 +140,7 @@ export const proposalSchema = z.object({
   interpretedReference: z.string().max(100).nullable(),
   category: z.enum(["reference_interpretation", "no_supported_match", "ambiguous"]),
   observationIds: z.array(z.string().min(1).max(300)).max(20),
+  candidateAssessments: z.array(candidateAssessmentSchema).min(1).max(20).optional(),
 }).strict();
 export const observationSchema = z.object({ id: z.string(), text: z.string(), evidenceIds: z.array(z.string()) });
 export const investigationResponseSchema = z.object({
@@ -160,5 +168,6 @@ export type DecisionEvidence = {
   investigation: InvestigationResponse;
 };
 export type Proposal = z.infer<typeof proposalSchema>;
+export type CandidateAssessment = z.infer<typeof candidateAssessmentSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiError = { error: { code: string; message: string } };

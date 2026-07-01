@@ -16,9 +16,9 @@ const invoices: Invoice[] = [
       "due_date": "2026-11-04",
       "amount": "500.00",
       "currency": "USD",
-      "description": "November event retainer"
+      "description": "Annual support retainer"
     },
-    "description": "November event retainer"
+    "description": "Annual support retainer"
   },
   {
     "id": "INV-4108",
@@ -35,9 +35,9 @@ const invoices: Invoice[] = [
       "due_date": "2026-11-04",
       "amount": "500.00",
       "currency": "USD",
-      "description": "Remaining October event balance"
+      "description": "October implementation balance"
     },
-    "description": "Remaining October event balance"
+    "description": "October implementation balance"
   },
   {
     "id": "INV-4104",
@@ -92,9 +92,9 @@ const invoices: Invoice[] = [
       "due_date": "2026-11-03",
       "amount": "325.00",
       "currency": "USD",
-      "description": "November venue hire"
+      "description": "November equipment rental"
     },
-    "description": "November venue hire"
+    "description": "November equipment rental"
   },
   {
     "id": "INV-4109",
@@ -114,6 +114,25 @@ const invoices: Invoice[] = [
       "description": "Print production invoice"
     },
     "description": "Print production invoice"
+  },
+  {
+    "id": "INV-4110",
+    "customer": "Alder Supply",
+    "customerKey": "C12",
+    "dueDate": "2026-11-04",
+    "amountMinor": 128000,
+    "currency": "USD",
+    "sourceRow": 8,
+    "description": "Quarterly equipment servicing",
+    "raw": {
+      "invoice_id": "INV-4110",
+      "customer": "Alder Supply",
+      "customer_key": "C12",
+      "due_date": "2026-11-04",
+      "amount": "1280.00",
+      "currency": "USD",
+      "description": "Quarterly equipment servicing"
+    }
   }
 ];
 
@@ -128,7 +147,7 @@ const payments: Payment[] = [
     "status": "completed",
     "kind": "receipt",
     "eventCode": "T0006",
-    "memo": "This is the retainer for the November event, not the remaining October balance.",
+    "memo": "Correction to my earlier message: this is for the annual support retainer, not the October implementation balance.",
     "timestamp": "2026-11-04T10:15:00Z",
     "providerId": "PAY701",
     "referenceId": null,
@@ -147,7 +166,7 @@ const payments: Payment[] = [
       "fee_cost": "17.94",
       "net": "482.06",
       "currency": "USD",
-      "memo": "This is the retainer for the November event, not the remaining October balance.",
+      "memo": "Correction to my earlier message: this is for the annual support retainer, not the October implementation balance.",
       "reference_id": "",
       "reference_type": ""
     }
@@ -321,6 +340,142 @@ const payments: Payment[] = [
       "reference_id": "PAY702",
       "reference_type": "TXN"
     }
+  },
+  {
+    "id": "PAY703",
+    "providerId": "PAY703",
+    "customerKey": "C12",
+    "invoiceId": null,
+    "grossMinor": 48000,
+    "feeMinor": 1715,
+    "netMinor": 46285,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "First installment for quarterly equipment servicing.",
+    "timestamp": "2026-11-04T12:00:00Z",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 8,
+    "raw": {
+      "transaction_id": "PAY703",
+      "timestamp": "2026-11-04T12:00:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "",
+      "customer_key": "C12",
+      "gross": "480.00",
+      "fee_cost": "17.15",
+      "net": "462.85",
+      "currency": "USD",
+      "memo": "First installment for quarterly equipment servicing.",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY704",
+    "providerId": "PAY704",
+    "customerKey": "C12",
+    "invoiceId": null,
+    "grossMinor": 35000,
+    "feeMinor": 1260,
+    "netMinor": 33740,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Second installment for quarterly equipment servicing.",
+    "timestamp": "2026-11-04T13:00:00Z",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 9,
+    "raw": {
+      "transaction_id": "PAY704",
+      "timestamp": "2026-11-04T13:00:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "",
+      "customer_key": "C12",
+      "gross": "350.00",
+      "fee_cost": "12.60",
+      "net": "337.40",
+      "currency": "USD",
+      "memo": "Second installment for quarterly equipment servicing.",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY705",
+    "providerId": "PAY705",
+    "customerKey": "C12",
+    "invoiceId": null,
+    "grossMinor": 45000,
+    "feeMinor": 1610,
+    "netMinor": 43390,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Final installment for quarterly equipment servicing.",
+    "timestamp": "2026-11-04T14:00:00Z",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 10,
+    "raw": {
+      "transaction_id": "PAY705",
+      "timestamp": "2026-11-04T14:00:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "",
+      "customer_key": "C12",
+      "gross": "450.00",
+      "fee_cost": "16.10",
+      "net": "433.90",
+      "currency": "USD",
+      "memo": "Final installment for quarterly equipment servicing.",
+      "reference_id": "",
+      "reference_type": ""
+    }
+  },
+  {
+    "id": "PAY706",
+    "providerId": "PAY706",
+    "customerKey": "C12",
+    "invoiceId": null,
+    "grossMinor": 79999,
+    "feeMinor": 2830,
+    "netMinor": 77169,
+    "status": "completed",
+    "kind": "receipt",
+    "eventCode": "T0006",
+    "memo": "Separate equipment inspection. Not part of quarterly servicing.",
+    "timestamp": "2026-11-04T15:00:00Z",
+    "referenceId": null,
+    "referenceType": null,
+    "currency": "USD",
+    "sourceRow": 11,
+    "raw": {
+      "transaction_id": "PAY706",
+      "timestamp": "2026-11-04T15:00:00Z",
+      "status": "completed",
+      "kind": "receipt",
+      "event_code": "T0006",
+      "invoice_id": "",
+      "customer_key": "C12",
+      "gross": "799.99",
+      "fee_cost": "28.30",
+      "net": "771.69",
+      "currency": "USD",
+      "memo": "Separate equipment inspection. Not part of quarterly servicing.",
+      "reference_id": "",
+      "reference_type": ""
+    }
   }
 ];
 
@@ -338,8 +493,8 @@ export function createSampleDataset(): Dataset {
   return {
     invoices: structuredClone(invoices),
     payments: structuredClone(payments),
-    invoiceSource: { ...source, label: "Sample invoices · 6 rows" },
-    paymentSource: { ...source, label: "Sample payments · 6 observations" },
+    invoiceSource: { ...source, label: "Sample invoices · 7 rows" },
+    paymentSource: { ...source, label: "Sample payments · 10 observations" },
     revision: 0,
   };
 }

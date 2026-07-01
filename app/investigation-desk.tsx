@@ -24,6 +24,7 @@ type Props = {
 
 const KIND_LABELS: Record<TriageFinding["kind"], string> = {
   "competing-receipt": "Choose an invoice",
+  "receipt-combination": "Check payment combination",
   refund: "Refund to check",
   partial: "Part payment",
   pending: "Pending",
@@ -43,11 +44,13 @@ export default function InvestigationDesk({ dataset, desk, findings, totalFindin
   const payments = new Map(dataset.payments.map((payment) => [payment.id, payment]));
   return <div className="investigation-desk">
     <div className="desk-heading"><h2>Work queue</h2><span className="desk-finding-count">{totalFindings} {totalFindings === 1 ? "case" : "cases"}</span></div>
-    <label className="search desk-search"><span className="search-label">Search queue</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg><input ref={searchRef} type="search" placeholder="Invoice or receipt ID" value={query} onChange={(event) => onQuery(event.target.value)} /></label>
-    <label className="queue-kind-filter"><span>Exception type</span><select value={kind} onChange={(event) => onKind(event.target.value as FindingKind)}><option value="all">All types ({desk.findings.length})</option>{(Object.keys(KIND_LABELS) as TriageFinding["kind"][]).map((value) => {
-      const count = desk.findings.filter((finding) => finding.kind === value).length;
-      return <option value={value} key={value} disabled={count === 0 && kind !== value}>{KIND_LABELS[value]} ({count})</option>;
-    })}</select></label>
+    <div className="desk-toolbar">
+      <label className="search desk-search"><span className="search-label">Search queue</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg><input ref={searchRef} type="search" placeholder="Invoice or receipt ID" value={query} onChange={(event) => onQuery(event.target.value)} /></label>
+      <label className="queue-kind-filter"><span>Exception type</span><select value={kind} onChange={(event) => onKind(event.target.value as FindingKind)}><option value="all">All types ({desk.findings.length})</option>{(Object.keys(KIND_LABELS) as TriageFinding["kind"][]).map((value) => {
+        const count = desk.findings.filter((finding) => finding.kind === value).length;
+        return <option value={value} key={value} disabled={count === 0 && kind !== value}>{KIND_LABELS[value]} ({count})</option>;
+      })}</select></label>
+    </div>
     <details className="collection-totals"><summary>Collection totals</summary><dl><div><dt>Original gross awaiting allocation</dt><dd>{formatMoney(desk.unallocatedGrossMinor)}</dd></div><div><dt>Eligible unallocated receipts</dt><dd>{desk.unallocatedReceiptCount} · counted once</dd></div><div><dt>Pending · excluded</dt><dd>{formatMoney(desk.pendingGrossMinor)}</dd></div><div><dt>Refunds & reversals</dt><dd>{formatMoney(desk.adjustmentGrossMinor)}</dd></div></dl><p>These amounts describe the loaded payment collection. Original gross can include receipts linked to exceptions; it is not available cash or a settled balance.</p><p>{dataset.paymentSource?.providerVerified ? "Only returned sandbox observations are provider-verified." : dataset.paymentSource?.kind === "sample" ? "Synthetic sample records; not provider-verified." : "Imported file records; not provider-verified."}</p></details>
     <div className="finding-list" aria-label="Receipt investigation queue">{findings.map((finding, index) => {
       const selected = selectedId !== null && finding.invoiceIds.includes(selectedId) && (!finding.paymentIds.length || finding.paymentIds.includes(selectedPaymentId ?? ""));
@@ -57,16 +60,16 @@ export default function InvestigationDesk({ dataset, desk, findings, totalFindin
       const invoice = finding.invoiceIds.length === 1 ? invoices.get(finding.invoiceIds[0]) : null;
       const firstIds = selectedId && finding.invoiceIds.includes(selectedId) ? [selectedId, ...finding.invoiceIds.filter((id) => id !== selectedId)] : finding.invoiceIds;
       return <article className={`finding finding-${finding.kind} ${selected ? "finding-selected" : ""}`} key={finding.id} aria-labelledby={`finding-title-${index}`}>
-        <div className="finding-header"><h3 id={`finding-title-${index}`} className="finding-customer">{title}</h3><span className="finding-issue">{KIND_LABELS[finding.kind]}</span></div>
+        <div className="finding-header"><div className="finding-identity"><h3 id={`finding-title-${index}`} className="finding-customer">{title}</h3><span className="finding-issue finding-classification">{KIND_LABELS[finding.kind]}</span></div></div>
         {invoice?.description && <p className="finding-purpose">{invoice.description}</p>}
         {finding.paymentIds.length > 0 ? <div className="finding-payment-strip">{finding.paymentIds.slice(0, 2).map((id) => {
           const payment = payments.get(id);
-          return <div key={id}><button className="finding-receipt-link" onClick={() => onReceipt(id)} aria-label={`Inspect payment event ${id}`}>{id}</button>{payment && <span className="finding-payment-amount">{formatMoney(payment.grossMinor)}<small>{payment.status.replaceAll("_", " ")}</small></span>}</div>;
+          return <div className="finding-receipt-record" key={id}><div className="finding-receipt-meta"><span className="finding-record-label">Source record</span><button className="finding-receipt-link" onClick={() => onReceipt(id)} aria-label={`Inspect payment event ${id}`}>{id}</button></div>{payment && <span className="finding-payment-amount">{formatMoney(payment.grossMinor)}<small>{payment.status.replaceAll("_", " ")}</small></span>}</div>;
         })}{finding.paymentIds.length > 2 && <p className="finding-record-count">{finding.paymentIds.length} source records · all IDs in details</p>}</div> : <p className="finding-no-invoice">No eligible receipt in the loaded data.</p>}
-        {finding.invoiceIds.length > 0 ? <div className="finding-invoice-actions" aria-label="Related invoices">{firstIds.slice(0, 2).map((id) => {
+        {finding.invoiceIds.length > 0 ? <div className="finding-related-invoices"><p className="finding-invoices-heading">Related invoices</p><div className="finding-invoice-actions" aria-label="Related invoices">{firstIds.slice(0, 2).map((id) => {
           const current = id === selectedId && selected;
           return <button key={id} className={current ? "current" : ""} ref={(element) => invoiceButtonRef(id, element)} onClick={() => onInvoice(id, preferredPaymentId)} aria-label={`Review ${id}`} aria-current={current ? "true" : undefined}><span>{id}</span>{current ? <small>Selected</small> : <span aria-hidden="true">→</span>}</button>;
-        })}{finding.invoiceIds.length > 2 && <button className="finding-more-invoices" onClick={() => onInvoice(firstIds[0], preferredPaymentId)}>Compare all {finding.invoiceIds.length} invoices →</button>}</div> : <p className="finding-no-invoice">No linked invoice. Inspect the source event.</p>}
+        })}{finding.invoiceIds.length > 2 && <button className="finding-more-invoices" onClick={() => onInvoice(firstIds[0], preferredPaymentId)}>Compare all {finding.invoiceIds.length} invoices →</button>}</div></div> : <p className="finding-no-invoice">No linked invoice. Inspect the source event.</p>}
         <FindingDetails finding={finding} />
       </article>;
     })}</div>

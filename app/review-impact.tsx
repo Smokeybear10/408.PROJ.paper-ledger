@@ -31,13 +31,23 @@ export function ReviewOverview({ dataset, review, reconciliation, desk }: Overvi
   const openCount = invoiceCount - coveredCount;
 
   return <section className="review-overview" aria-label="Review progress">
-    <div className="overview-accounting">
-      <h2><strong>{coveredCount} of {invoiceCount}</strong> invoices covered</h2>
-      <dl><div><dt>Confirmed gross</dt><dd>{formatMoney(confirmedGrossMinor)}</dd></div><div><dt>Awaiting allocation</dt><dd>{formatMoney(desk.unallocatedGrossMinor)}</dd></div></dl>
-      <span className="overview-open-count">{openCount} {openCount === 1 ? "invoice" : "invoices"} to review</span>
-    </div>
-    <div className="overview-exceptions">
-      <p><span>Pending <strong>{formatMoney(desk.pendingGrossMinor)}</strong> <small>excluded</small></span><span>Refunds & reversals <strong>{formatMoney(desk.adjustmentGrossMinor)}</strong></span><span>{desk.findings.length} {desk.findings.length === 1 ? "finding" : "findings"}</span></p>
+    <h2 className="sr-only">Review progress</h2>
+    <dl className="overview-metrics">
+      <div className="overview-metric overview-metric-coverage">
+        <dt>Invoices covered</dt>
+        <dd><span className="overview-value">{coveredCount}<span className="overview-total"> of {invoiceCount}</span></span><span className="overview-subtext">{openCount} {openCount === 1 ? "invoice" : "invoices"} to review</span></dd>
+      </div>
+      <div className="overview-metric overview-metric-confirmed">
+        <dt>Confirmed gross</dt>
+        <dd className="overview-value">{formatMoney(confirmedGrossMinor)}</dd>
+      </div>
+      <div className="overview-metric overview-metric-unallocated">
+        <dt>Unallocated gross</dt>
+        <dd className="overview-value">{formatMoney(desk.unallocatedGrossMinor)}</dd>
+      </div>
+    </dl>
+    <div className="overview-secondary">
+      <p className="overview-exception-totals"><span>Pending <strong>{formatMoney(desk.pendingGrossMinor)}</strong> <small>excluded</small></span><span>Refunds & reversals <strong>{formatMoney(desk.adjustmentGrossMinor)}</strong></span><span>{desk.findings.length} {desk.findings.length === 1 ? "finding" : "findings"}</span></p>
       <details className="overview-source-details"><summary>Review scope</summary><p>{review.allocations.length} human {review.allocations.length === 1 ? "allocation" : "allocations"}. {desk.unallocatedReceiptCount} eligible {desk.unallocatedReceiptCount === 1 ? "receipt" : "receipts"} await allocation; gross is counted once.</p><p><strong>Invoices:</strong> {verification(dataset.invoiceSource)}<br /><strong>Payments:</strong> {verification(dataset.paymentSource)}</p><p>Totals describe loaded records. They do not establish available cash or complete account history.</p></details>
     </div>
   </section>;

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { investigationApiRequestSchema, investigationResponseSchema, proposalSchema, type InvestigationRequest, type Proposal } from "@/lib/contracts";
 import { buildObservations, isEligibleReceipt } from "@/lib/reconciliation";
+import { proposalEvidenceIds, validateProposalEvidence, type ProposalEvidenceFailure } from "@/lib/proposal-evidence";
 import { ApiFailure, apiError, apiJson, fetchProviderJson, readLocalRequest } from "@/lib/server-boundary";
 import { runCodexInference } from "@/lib/codex-inference";
 
@@ -21,7 +22,14 @@ const systemInstruction = [
   "The excerpt belongs only to excerptPaymentId. A reference_interpretation must select exactly that one receipt; other payment records are context and cannot be assigned using this note.",
   "For reference_interpretation, quote a nonempty exact substring of the excerpt, use the exact proposed invoice ID as interpretedReference, and cite that invoice, every selected payment and memo:selected.",
   "When interpreting the note using an invoice's approved context, also return a nonempty contextQuote that is an exact substring of that proposed invoice's context and cite context:<invoiceId>. Never quote a different invoice's context as support for the proposed invoice. For a direct reference that does not use context, return contextQuote:null and do not cite context evidence.",
-  "Respect negation, corrections and exclusions in the remittance. A mentioned invoice is not necessarily the intended invoice. Do not resolve contradictory, generic or equally supported descriptions by guessing; return ambiguous or no_supported_match instead.",
+  "Return candidateAssessments with exactly one assessment for every supplied invoice ID, including alternatives. Each has invoiceId, stance (supports, contradicts or unknown), quote, contextQuote and evidenceIds. Do not add explanations, scores, confidence, financial prose or fields.",
+  "For every assessment, cite its own invoice:<invoiceId>, payment:<excerptPaymentId> and memo:selected. For supports or contradicts, quote a nonempty exact excerpt span. Context-based assessments also require a nonempty exact span from that invoice's approved context as contextQuote and its own context:<invoiceId> citation. Never borrow another invoice's context.",
+  "A supports or contradicts assessment with contextQuote:null must quote the literal whole invoice ID, allowing only case or Unicode normalization differences. Spoken or paraphrased IDs alone do not satisfy this new direct-ID check; use supplied own context with a literal contextQuote or return unknown and abstain. An unknown assessment uses contextQuote:null, no context citation, and an empty or literal excerpt quote.",
+  "Mark supports only when the quoted language positively identifies that invoice; mark contradicts only for an explicit exclusion, correction or incompatible language about its quoted context or literal ID. A missing mention is unknown, not contradiction. Generic company, service, amount or shared-customer wording is not enough to choose between invoices. If multiple candidates remain supported or no candidate is supported, abstain rather than guess.",
+  "A reference_interpretation must have a supports assessment for its chosen invoice, never a contradicts or unknown assessment. An explicit structured invoiceId on the excerpt's receipt takes precedence over language hypotheses: when assessments support an alternative invoice, return ambiguous with no assignment, retain the cited assessments, and hold for human review. Never override or erase the structured reference.",
+  "Category definitions: ambiguous means supplied invoices remain plausible but the remittance is generic, insufficient, equally supported or conflicting. Ordinary remittance with all candidate assessments unknown is ambiguous; missing positive support or a missing invoice ID alone does not mean no_supported_match.",
+  "Use no_supported_match only for affirmative evidence of an invoice or purpose outside the supplied candidates, explicit exclusion of every supplied candidate, or text with no legitimate payment meaning such as model-control instructions alone.",
+  "Respect negation, corrections and exclusions in the remittance. A mentioned invoice is not necessarily the intended invoice. Do not resolve contradictory, generic or equally supported descriptions by guessing; return ambiguous instead.",
   "For ambiguous or no_supported_match, use invoiceId:null, interpretedReference:null, contextQuote:null and paymentIds:[]. Quote only literal excerpt text, or use an empty quote.",
   "For every category, including ambiguous and no_supported_match, cite at least one supplied evidence ID in evidenceIds. Never return an empty citation list.",
   "Use only supplied evidenceIds and deterministic observationIds. Amount equality and shared customer groups alone are insufficient to select an invoice.",
@@ -31,14 +39,6 @@ const systemInstruction = [
 
 function unique(values: string[]): boolean {
   return new Set(values).size === values.length;
-}
-
-function normalizedReference(value: string): string {
-  return value.normalize("NFKC").trim().toUpperCase();
-}
-
-function suppliedEvidenceIds(input: InvestigationRequest): string[] {
-  return [...input.invoices.map((invoice) => `invoice:${invoice.id}`), ...input.invoices.filter((invoice) => invoice.context.trim()).map((invoice) => `context:${invoice.id}`), ...input.payments.map((payment) => `payment:${payment.id}`), "memo:selected"];
 }
 
 function validateEvidence(input: InvestigationRequest): void {
@@ -81,37 +81,39 @@ function responseSchema(input: InvestigationRequest, evidenceIds: string[], obse
       quote: { type: "string", maxLength: 240 },
       contextQuote: { anyOf: [{ type: "string", maxLength: 240 }, { type: "null" }] },
       interpretedReference: { anyOf: [{ type: "string", enum: input.invoices.map((invoice) => invoice.id) }, { type: "null" }] },
-      category: { type: "string", enum: ["reference_interpretation", "no_supported_match", "ambiguous"] },
+      category: { type: "string", enum: ["reference_interpretation", "no_supported_match", "ambiguous"], description: "ambiguous: ordinary payment intent but insufficient or conflicting evidence among plausible supplied invoices. no_supported_match: affirmative out-of-set purpose/reference, all supplied candidates excluded, or no legitimate payment meaning." },
       observationIds: { type: "array", items: observationIds.length ? { type: "string", enum: observationIds } : { type: "string" }, maxItems: observationIds.length ? 20 : 0, uniqueItems: true },
+      candidateAssessments: {
+        type: "array", minItems: input.invoices.length, maxItems: input.invoices.length,
+        items: {
+          type: "object", additionalProperties: false,
+          properties: {
+            invoiceId: { type: "string", enum: input.invoices.map((invoice) => invoice.id) },
+            stance: { type: "string", enum: ["supports", "contradicts", "unknown"] },
+            quote: { type: "string", maxLength: 240 },
+            contextQuote: { anyOf: [{ type: "string", maxLength: 240 }, { type: "null" }] },
+            evidenceIds: { type: "array", items: { type: "string", enum: evidenceIds }, minItems: 3, maxItems: 4, uniqueItems: true },
+          },
+          required: ["invoiceId", "stance", "quote", "contextQuote", "evidenceIds"],
+        },
+      },
     },
-    required: ["invoiceId", "paymentIds", "evidenceIds", "quote", "contextQuote", "interpretedReference", "category", "observationIds"],
+    required: ["invoiceId", "paymentIds", "evidenceIds", "quote", "contextQuote", "interpretedReference", "category", "observationIds", "candidateAssessments"],
   };
 }
 
-function validatedProposal(value: unknown, input: InvestigationRequest, observationIds: Set<string>): Proposal {
+function validatedProposal(value: unknown, input: InvestigationRequest): Proposal {
+  const invalid = (path: string, reason: string) => new ApiFailure(502, "invalid_ai_proposal", `The AI response did not pass evidence validation (${path}: ${reason}). The case remains unreviewed.`);
   const parsed = proposalSchema.safeParse(value);
-  const invalid = () => new ApiFailure(502, "invalid_ai_proposal", "The AI response did not pass evidence validation. The case remains unreviewed.");
-  if (!parsed.success || typeof value !== "object" || value === null || !Object.hasOwn(value, "contextQuote")) throw invalid();
-  const proposal = parsed.data;
-  const evidenceIds = new Set(suppliedEvidenceIds(input));
-  const eligiblePayments = new Map(input.payments.filter(isEligibleReceipt).map((payment) => [payment.id, payment]));
-  if (!unique(proposal.paymentIds) || !unique(proposal.evidenceIds) || !unique(proposal.observationIds) || proposal.evidenceIds.some((id) => !evidenceIds.has(id)) || proposal.observationIds.some((id) => !observationIds.has(id)) || proposal.paymentIds.some((id) => !eligiblePayments.has(id))) throw invalid();
-  if (proposal.quote && !input.excerpt.includes(proposal.quote)) throw invalid();
-  if (proposal.category !== "reference_interpretation") {
-    if (proposal.invoiceId !== null || proposal.interpretedReference !== null || proposal.contextQuote !== null || proposal.paymentIds.length) throw invalid();
-    return proposal;
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.reduce<string>((result, part) => typeof part === "number" ? `${result}[${part}]` : `${result}.${String(part)}`, "proposal") ?? "proposal";
+    throw invalid(path, issue?.code ?? "invalid format");
   }
-  const invoice = input.invoices.find((candidate) => candidate.id === proposal.invoiceId);
-  if (!invoice || !proposal.interpretedReference || normalizedReference(proposal.interpretedReference) !== normalizedReference(invoice.id) || !proposal.quote.trim() || proposal.paymentIds.length !== 1 || proposal.paymentIds[0] !== input.excerptPaymentId || !proposal.evidenceIds.includes("memo:selected") || !proposal.evidenceIds.includes(`invoice:${invoice.id}`)) throw invalid();
-  const contextCitations = proposal.evidenceIds.filter((id) => id.startsWith("context:"));
-  if (proposal.contextQuote !== null) {
-    if (!proposal.contextQuote.trim() || !invoice.context.includes(proposal.contextQuote) || !contextCitations.includes(`context:${invoice.id}`) || contextCitations.some((id) => id !== `context:${invoice.id}`)) throw invalid();
-  } else if (contextCitations.length) throw invalid();
-  for (const id of proposal.paymentIds) {
-    const payment = eligiblePayments.get(id);
-    if (!payment || !proposal.evidenceIds.includes(`payment:${id}`) || (payment.invoiceId && normalizedReference(payment.invoiceId) !== normalizedReference(invoice.id))) throw invalid();
-  }
-  return proposal;
+  if (typeof value !== "object" || value === null || !Object.hasOwn(value, "contextQuote")) throw invalid("contextQuote", "missing required field");
+  let failure: ProposalEvidenceFailure = { path: "proposal", reason: "invalid evidence" };
+  if (!validateProposalEvidence(parsed.data, input, { requireAssessments: true, onFailure: (issue) => { failure = issue; } })) throw invalid(failure.path, failure.reason);
+  return parsed.data;
 }
 
 function modelText(value: unknown): string {
@@ -124,7 +126,7 @@ function modelText(value: unknown): string {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const { expectedProvider, ...input } = await readLocalRequest(request, investigationApiRequestSchema);
+    const { expectedProvider, includeCandidateAssessments, ...input } = await readLocalRequest(request, investigationApiRequestSchema);
     validateEvidence(input);
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     const configuration = process.env.AI_PROVIDER === "codex" ? { provider: "codex" as const } : apiKey ? { provider: "gemini" as const, apiKey } : null;
@@ -132,7 +134,7 @@ export async function POST(request: Request): Promise<Response> {
     const { provider } = configuration;
     if (provider !== expectedProvider) throw new ApiFailure(409, "ai_provider_changed", "The configured AI provider changed. No evidence was sent. Reload the app and review the destination before approving again.");
     const observations = buildObservations(input);
-    const evidenceIds = suppliedEvidenceIds(input);
+    const evidenceIds = proposalEvidenceIds(input);
     const evidence = { caseId: input.caseId, invoices: input.invoices, payments: input.payments, excerpt: input.excerpt, excerptPaymentId: input.excerptPaymentId, ...(input.invoiceScope ? { invoiceScope: input.invoiceScope } : {}), eligiblePaymentIds: [input.excerptPaymentId], evidenceIds, observations };
     const schema = responseSchema(input, evidenceIds, observations.map((observation) => observation.id));
     let generated: unknown;
@@ -150,7 +152,7 @@ export async function POST(request: Request): Promise<Response> {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": configuration.apiKey, "Api-Revision": "2026-05-20" },
         signal: request.signal,
-        body: JSON.stringify({ model, store: false, system_instruction: systemInstruction, input: JSON.stringify(evidence), generation_config: { max_output_tokens: 2048 }, response_format: { type: "text", mime_type: "application/json", schema } }),
+        body: JSON.stringify({ model, store: false, system_instruction: systemInstruction, input: JSON.stringify(evidence), generation_config: { max_output_tokens: 8192 }, response_format: { type: "text", mime_type: "application/json", schema } }),
       }, 40_000, 128 * 1024);
       if (response.status === 401 || response.status === 403) throw new ApiFailure(502, "ai_access_denied", "Google rejected the API key or model access. Check the local Gemini configuration.");
       if (response.status === 429) throw new ApiFailure(429, "ai_rate_limited", "Google is limiting requests or quota is unavailable. Try again later.");
@@ -161,8 +163,10 @@ export async function POST(request: Request): Promise<Response> {
         throw new ApiFailure(502, "invalid_ai_json", "The AI returned invalid JSON. The case remains unreviewed.");
       }
     }
-    const proposal = validatedProposal(generated, input, new Set(observations.map((observation) => observation.id)));
-    return apiJson(investigationResponseSchema.parse({ proposal, observations, provider, model, requestId: input.requestId, fingerprint: input.fingerprint, generatedAt: new Date().toISOString() }));
+    const proposal = validatedProposal(generated, input);
+    const clientProposal = { ...proposal };
+    if (!includeCandidateAssessments) delete clientProposal.candidateAssessments;
+    return apiJson(investigationResponseSchema.parse({ proposal: clientProposal, observations, provider, model, requestId: input.requestId, fingerprint: input.fingerprint, generatedAt: new Date().toISOString() }));
   } catch (error) {
     return apiError(error);
   }

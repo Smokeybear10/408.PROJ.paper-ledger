@@ -3,7 +3,7 @@ import { confirmAllocation, formatMoney, isEligibleReceipt, reconcile } from "./
 
 export type TriageFinding = {
   id: string;
-  kind: "competing-receipt" | "refund" | "partial" | "pending" | "overpayment" | "missing-receipt" | "unsupported";
+  kind: "competing-receipt" | "receipt-combination" | "refund" | "partial" | "pending" | "overpayment" | "missing-receipt" | "unsupported";
   priority: "high" | "medium" | "low";
   title: string;
   description: string;
@@ -180,6 +180,14 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState, precom
       }));
     }
     const availableReceiptEvidence = row.candidatePayments.some((candidate) => candidate.eligible);
+    const relatedReceipts = row.candidatePayments.filter((candidate) => candidate.eligible && candidate.match !== "amount" && unallocated.has(candidate.payment.id));
+    if (row.confirmedGrossMinor < row.invoice.amountMinor && relatedReceipts.length > 1 && !findings.some((item) => item.invoiceIds.includes(row.invoice.id))) {
+      findings.push(finding({
+        id: `receipt-combination:${row.invoice.id}`, kind: "receipt-combination", priority: "medium", title: "Several receipts need an invoice review",
+        description: `${relatedReceipts.length} unallocated receipts share this invoice reference or customer key. Their relationship is unconfirmed; combining their amounts does not prove a match.`,
+        nextStep: "Inspect the receipt notes and use the exact combination search before selecting receipts for confirmation.", invoiceIds: [row.invoice.id], paymentIds: relatedReceipts.map((candidate) => candidate.payment.id),
+      }));
+    }
     if (row.confirmedGrossMinor === 0 && !availableReceiptEvidence && !pendingInvoices.has(row.invoice.id) && !refundInvoices.has(row.invoice.id) && !unsupportedInvoices.has(row.invoice.id)) {
       findings.push(finding({
         id: `missing-receipt:${row.invoice.id}`, kind: "missing-receipt", priority: "low", title: "No eligible receipt in loaded data",
@@ -190,7 +198,7 @@ export function buildExceptionDesk(dataset: Dataset, review: ReviewState, precom
   });
 
   const priorityRank = { high: 0, medium: 1, low: 2 };
-  const kindRank = { "competing-receipt": 0, refund: 1, overpayment: 2, partial: 3, unsupported: 4, pending: 5, "missing-receipt": 6 };
+  const kindRank = { "competing-receipt": 0, refund: 1, overpayment: 2, "receipt-combination": 3, partial: 4, unsupported: 5, pending: 6, "missing-receipt": 7 };
   findings.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority] || kindRank[a.kind] - kindRank[b.kind] || a.id.localeCompare(b.id));
   return {
     findings,

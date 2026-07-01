@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { MAX_MINOR, MAX_ROWS, paymentSchema, paypalApiRequestSchema, paypalConnectionRequestSchema, paypalConnectionStatusSchema, paypalResponseSchema, type Payment, type PayPalConnectionRequest, type PayPalConnectionStatus, type PayPalRequest } from "@/lib/contracts";
+import { isEligibleReceipt } from "@/lib/reconciliation";
 import { ApiFailure, apiError, apiJson, fetchProviderJson, readLocalRequest } from "@/lib/server-boundary";
 
 export const runtime = "nodejs";
@@ -295,6 +296,7 @@ async function reporting(connection: SandboxConnection, request: Extract<PayPalR
   if (endMs <= startMs || endMs - startMs > 31 * 24 * 60 * 60 * 1000) throw new ApiFailure(400, "invalid_date_range", "Choose a start before the end, within a maximum 31-day window.");
   const payments: Payment[] = [];
   const fingerprints = new Map<string, string>();
+  const incomingProviderIds = new Set<string>();
   let duplicateCount = 0;
   let rawCount = 0;
   let expectedItems: number | null = null;
@@ -331,6 +333,10 @@ async function reporting(connection: SandboxConnection, request: Extract<PayPalR
         if (previous !== fingerprint) throw new ApiFailure(502, "conflicting_paypal_duplicates", "PayPal returned conflicting observations for the same event. The current dataset has not been replaced.");
         duplicateCount += 1;
         continue;
+      }
+      if (isEligibleReceipt(payment)) {
+        if (incomingProviderIds.has(payment.providerId)) throw new ApiFailure(502, "conflicting_paypal_receipts", "PayPal returned multiple incoming events for the same receipt. Retry with a smaller date range or retrieve the individual capture. The current dataset has not been replaced.");
+        incomingProviderIds.add(payment.providerId);
       }
       fingerprints.set(payment.id, fingerprint);
       payments.push(payment);
